@@ -13,16 +13,26 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
-import pickle as _std_pickle
-try:
-    import dill as _pickle  # allows loading classes not importable by module path
-except Exception:  # dill is optional
-    _pickle = _std_pickle
+from io import BytesIO
+from PyPDF2 import PdfReader, PdfWriter
 
+# SECURITY: Disabled due to unsafe deserialization vulnerability
+# import pickle as _std_pickle
+# try:
+#    import dill as _pickle  # allows loading classes not importable by module path
+# except Exception:  # dill is optional
+#     _pickle = _std_pickle
+_pickle = None # Placeholder to avoid NameErrors
 
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+
+# Add RMAP related imports 
+import base64
+import json
+from rmap.identity_manager import IdentityManager
+from rmap.rmap import RMAP
 
 def create_app():
     app = Flask(__name__)
@@ -39,6 +49,31 @@ def create_app():
     app.config["DB_NAME"] = os.environ.get("DB_NAME", "tatou")
 
     app.config["STORAGE_DIR"].mkdir(parents=True, exist_ok=True)
+
+
+    # --- RMAP configuration ---
+    keys_dir = Path("/app/keys")
+    client_keys_dir = keys_dir / "clients"
+    server_pub_key = keys_dir / "server" / "server_pub.asc"
+    server_priv_key = keys_dir / "server" / "server_priv.asc"
+    passphrase = os.environ.get("GPG_PASSPHRASE", "")
+
+    try:
+
+        app.config["RMAP_IDENTITY_MANAGER"] = IdentityManager(
+        client_keys_dir=str(client_keys_dir),
+        server_public_key_path=str(server_pub_key),
+        server_private_key_path=str(server_priv_key),
+        server_private_key_passphrase=passphrase
+        )
+        app.config["RMAP_HANDLER"] = RMAP(app.config["RMAP_IDENTITY_MANAGER"])
+        print ("RMAP initialized successfully!")
+    except Exception as e:
+        print (f"RMAP initialization failed: {e}")
+
+        app.config["RMAP_IDENTITY_MANAGER"] = None
+        app.config["PMAP_HANDLER"] = None
+
 
     # --- DB engine only (no Table metadata) ---
     def db_url() -> str:
@@ -377,8 +412,7 @@ def create_app():
     
     # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
     @app.get("/api/get-version/<link>")
-    def get_version(link: str):
-        
+    def get_version(link: str):cx        
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -460,8 +494,10 @@ def create_app():
         # Fetch the document (enforce ownership)
         try:
             with get_engine().connect() as conn:
-                query = "SELECT * FROM Documents WHERE id = " + doc_id
-                row = conn.execute(text(query)).first()
+                row = conn.execute(
+                    text("SELECT * FROM Documents WHERE id = :id"),
+                    {"id": doc_id}
+                ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
@@ -508,6 +544,19 @@ def create_app():
             "note": delete_error,   # null/omitted if everything was fine
         }), 200
         
+	def add_metadata_to_pdf_bytes(pdf_bytes: bytes, group_id: str, session_secret: str) -> bytes:
+		reader = PdfReader(BytesIO(pdf_bytes))
+		writer = PdfWriter()
+		for page in reader.pages:
+			writer.add_page(page)
+		writer.add_metadata({
+			"/Author": f"{group_id}",
+			"/Title": "Watermarked PDF",
+			"/Keywords": f"session={session_secret}"
+		})
+		out = BytesIO()
+		writer.write(out)
+		return out.getvalue()
         
     # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
     @app.post("/api/create-watermark")
@@ -616,7 +665,7 @@ def create_app():
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
 
         # link token = sha1(watermarked_file_name)
-        link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
+        link_token = hashlib.sha256(candidate.encode("utf-8")).hexdigest()[:32]
 
         try:
             with get_engine().begin() as conn:
@@ -640,8 +689,8 @@ def create_app():
             # best-effort cleanup if DB insert fails
             try:
                 dest_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as cleanup_e:
+                print (f"Warning: Failed to cleanup temporary file {dest_path}: {cleanup_e}")
             return jsonify({"error": f"database error during version insert: {e}"}), 503
 
         return jsonify({
@@ -659,10 +708,14 @@ def create_app():
     @app.post("/api/load-plugin")
     @require_auth
     def load_plugin():
+        # SECURITY MITIGATION: plugin loading is diabled temporarily to avoid insecure deserialization (pickle/dill leads to RCE). 
+        # Re-enable only after implementing signed plugins or alternative safe loading
+        return jsonify({"error": "plugin loading is temporarily disabled for security"}), 403
         """
         Load a serialized Python class implementing WatermarkingMethod from
         STORAGE_DIR/files/plugins/<filename>.{pkl|dill} and register it in wm_mod.METHODS.
         Body: { "filename": "MyMethod.pkl", "overwrite": false }
+        """
         """
         payload = request.get_json(silent=True) or {}
         filename = (payload.get("filename") or "").strip()
@@ -720,7 +773,7 @@ def create_app():
             "class_qualname": f"{getattr(cls, '__module__', '?')}.{getattr(cls, '__qualname__', cls.__name__)}",
             "methods_count": len(WMUtils.METHODS)
         }), 201
-        
+        """
     
     
     # GET /api/get-watermarking-methods -> {"methods":[{"name":..., "description":...}, ...], "count":N}
@@ -810,8 +863,186 @@ def create_app():
             "position": position
         }), 201
 
-    return app
+
+    # POST /api/rmap-initiate
+    @app.post("/api/rmap-initiate")
+    def rmap_initiate():
+        """Handle RMAP Message 1 - initiate authentication handshake"""
+        if not app.config.get("RMAP_HANDLER"):
+            return jsonify({"error": "RMAP not configured"}), 503
+
+        try:
+            payload = request.get_json(silent=True) or {}
+            if "payload" not in payload:
+                return jsonify({"error": "payload field is required"}), 400
+
+            # call RMAP handler to process Message 1
+            response = app.config["RMAP_HANDLER"].handle_message1(payload)
+            return jsonify(response)
+
+        except Exception as e:
+            app.logger.error(f"RMAP initiate error: {e}")
+            return jsonify({"error": "Internal server error"}), 500
     
+
+    # POST /api/rmap-get-link
+    @app.post("/api/rmap-get-link")
+    def rmap_get_link():
+        """Handle RMAP Message 2 - finalize authentication and return watermarked PDF link"""
+        if not app.config.get("RMAP_HANDLER"):
+            return jsonify({"error": "RMAP not configured"}), 503
+
+        try:
+            payload = request.get_json(silent=True) or {}
+            if "payload" not in payload:
+                return jsonify({"error": "payload field is required"}), 400
+
+            # call RMAP handler to process Message 2
+            response = app.config["RMAP_HANDLER"].handle_message2(payload)
+
+            if "error" in response:
+                return jsonify(response), 400
+
+            # after validation, return a link to the watermarked PDF
+            session_secret = response.get("result")
+            if not session_secret:
+                return jsonify({"error": "Invalid RMAP response"}), 500
+
+            # Get Client Identity
+            identity = None
+            rmap_handler = app.config["RMAP_HANDLER"]
+            for ident, (nonce_client, nonce_server) in rmap_handler.nonces.items():
+            # Match session by nonce combination
+                combined = (int(nonce_client) << 64) | int(nonce_server)
+                if f"{combined:032x}" == session_secret:
+                    identity = ident
+                    break
+
+	    if not identity:
+		return jsonify({"error": "Failed to resolve client identity"}), 500
+		
+        
+            # Select watermarking method
+	    method = request.args.get("method", "phantom").lower()
+	    watermarks_dir = app.config["STORAGE_DIR"] / "rmap_watermarks"
+	    watermarks_dir.mkdir(parents=True, exist_ok=True)
+	    output_path = None
+
+	    if watermark_method == "phantom":
+                from phantom_annotation_watermark import PhantomAnnotationWatermark
+                
+		# initiate watermarker
+                watermarker = PhantomAnnotationWatermark()
+            
+                # Sample PDF for RMAP 
+                sample_pdf_path = "/app/storage/rmap_sample.pdf"
+            
+                # Create watermarked PDF
+                secret_message = f"RMAP Session: {session_secret}, Client: {identity}"
+                watermark_key = session_secret[:16]  # Use first 16 digit of session_secret as key
+            
+                with open(sample_pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+            
+                # Add watermark（Contain client identity）
+                watermarked_pdf = watermarker.add_watermark(
+                    pdf_bytes,
+                    secret_message,
+                    watermark_key,
+                    client_identity=identity
+                )
+		
+		output_path = watermarks_dir / f"{session_secret}_phantom.pdf"
+		with open(output_path, "wb") as f:
+			f.write(watermarked_pfd)
+
+	    elif watermark_method == "metadata":
+		from watermarking_metadata import generate_metadata_watermarked_pdf
+		
+		template_pdf = "/app/storage/rmap_sample.pdf"
+		output_path = watermarks_dir / f"{session_secret}_metadata.pdf"
+		generate_matadata_watermarked_pdf(
+			template_pdf=str(template_pdf),
+			output_pdf=str(output_pdf),
+			group_id=identity,
+			session_secret=session_secret
+		)
+            
+                # Store watermarked PDF in storage dir
+                watermarks_dir = app.config["STORAGE_DIR"] / "rmap_watermarks"
+                watermarks_dir.mkdir(parents=True, exist_ok=True)
+            
+                output_path = watermarks_dir / f"{session_secret}.pdf"
+                with open(output_path, "wb") as f:
+                    f.write(watermarked_pdf)
+            
+                # Create database record
+                try:
+                    with get_engine().begin() as conn:
+                        # First check if exists document record for RMAP watermark
+                        rmap_doc = conn.execute(
+                            text("SELECT id FROM Documents WHERE name = 'RMAP_Sample_Document' LIMIT 1")
+                        ).first()
+        
+                        if not rmap_doc:
+                            conn.execute(
+                                text("""
+                                    INSERT INTO Documents (name, path, ownerid, sha256, size)
+                                    VALUES (:name, :path, 1, UNHEX(:sha256hex), :size)
+                                """),
+                                {
+                                    "name": "RMAP_Sample_Document",
+                                    "path": "/app/storage/rmap_sample.pdf",
+                                    "sha256hex": hashlib.sha256(b"rmap_sample").hexdigest(),
+                                    "size": os.path.getsize(sample_pdf_path) if os.path.exists(sample_pdf_path) else 0
+                                },
+                            )
+                            doc_id = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                        else:
+                            doc_id = int(rmap_doc.id)
+        
+                        # Create version record
+                        conn.execute(
+                            text("""
+                                INSERT INTO Versions (documentid, link, intended_for, secret, method, position, path)
+                                VALUES (:documentid, :link, :intended_for, :secret, :method, :position, :path)
+                            """),
+                            {
+                                "documentid": doc_id,
+                                "link": session_secret,
+                                "intended_for": identity or "RMAP_Client",
+                                "secret": secret_message,
+                                "method": "phantom-annotation-g21",
+                                "position": "",
+                                "path": str(output_path)
+                            },
+                        )
+                        app.logger.info(f"Created database record for RMAP watermarked PDF: {session_secret}")
+        
+                except Exception as db_error:
+                    app.logger.error(f"Failed to create database record: {db_error}")
+
+
+                app.logger.info(f"Created watermarked PDF for RMAP session: {session_secret}, client: {identity}")
+            
+            
+                return jsonify({
+                    "result": session_secret,
+                    "link": f"/api/get-version/{session_secret}",
+                    "message": "Watermarked PDF generated successfully",
+                    "client_identity": identity,
+                    "file_size": len(watermarked_pdf)
+                })
+            
+            except Exception as e:
+                app.logger.error(f"Watermark generation failed: {e}")
+                return jsonify({"error": f"Failed to generate watermarked PDF: {str(e)}"}), 500
+
+        except Exception as e:
+            app.logger.error(f"RMAP get-link error: {e}")
+            return jsonify({"error": "Internal server error"}), 500
+
+    return app
 
 # WSGI entrypoint
 app = create_app()
@@ -819,4 +1050,5 @@ app = create_app()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 

@@ -42,7 +42,10 @@ from watermarking_method import (
     load_pdf_bytes,
 )
 from add_after_eof import AddAfterEOF
-from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
+
+# from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
+
+from phantom_annotation_watermark import PhantomAnnotationWatermark
 
 # --------------------
 # Method registry
@@ -50,7 +53,8 @@ from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
 
 METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
-    UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF()
+    # UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
+    PhantomAnnotationWatermark.name: PhantomAnnotationWatermark()
 }
 """Registry of available watermarking methods.
 
@@ -93,10 +97,16 @@ def apply_watermark(
     secret: str,
     key: str,
     position: str | None = None,
+    client_identity: Optional[str] = None
 ) -> bytes:
     """Apply a watermark using the specified method and return new PDF bytes."""
     m = get_method(method)
-    return m.add_watermark(pdf=pdf, secret=secret, key=key, position=position)
+    
+    # Check if the method supports client_identity parameter
+    if hasattr(m, 'add_watermark') and 'client_identity' in m.add_watermark.__code__.co_varnames:    
+        return m.add_watermark(pdf=pdf, secret=secret, key=key, position=position, client_identity=client_identity)
+    else:
+        return m.add_watermark(pdf=pdf, secret=secret, key=key, position=position)
 
 def is_watermarking_applicable(
     method: str | WatermarkingMethod,
@@ -114,6 +124,24 @@ def read_watermark(method: str | WatermarkingMethod, pdf: PdfSource, key: str) -
     return m.read_secret(pdf=pdf, key=key)
 
 
+def read_watermark_metadata(
+    method: str | WatermarkingMethod,
+    pdf: PdfSource,
+    key: str
+) -> Dict[str, Any]:
+    m = get_method(method)    
+    if hasattr(m, 'read_watermark_metadata'):    
+        return m.read_watermark_metadata(pdf=pdf, key=key)
+    else:
+        secret = m.read_watermark_metadata(pdf=pdf, key=key)
+        return {
+            "content": secret,
+            "format": "legacy",
+            "client": "unknown",
+            "provider": getattr(m, 'name', 'unknown')
+        }
+
+
 # --------------------
 # PDF exploration
 # --------------------
@@ -127,7 +155,7 @@ _TYPE_RE: Final[re.Pattern[bytes]] = re.compile(rb"/Type\s*/([A-Za-z]+)")
 
 
 def _sha1(b: bytes) -> str:
-    return hashlib.sha1(b).hexdigest()
+    return hashlib.sha256(b).hexdigest()
 
 
 def explore_pdf(pdf: PdfSource) -> Dict[str, Any]:
@@ -200,9 +228,9 @@ def explore_pdf(pdf: PdfSource) -> Dict[str, Any]:
 
         doc.close()
         return root
-    except Exception:
+    except Exception as e:
         # Fallback: regex-based object scanning (no third-party deps)
-        pass
+        print(f"Info: PyMuPDF not available, using fallback PDF exploration: {e}")
 
     # Regex fallback: enumerate uncompressed objects
     children: List[Dict[str, Any]] = []
@@ -246,6 +274,7 @@ __all__ = [
     "get_method",
     "apply_watermark",
     "read_watermark",
+    "read_watermark_metadata",
     "explore_pdf",
     "is_watermarking_applicable"
 ]

@@ -205,5 +205,24 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-server/keys/server/server_priv.asc
+
+# Sensitive keys and flags
+server/keys/server/
 flag
+server/flag
+tatou_flag_backups/
+
+# Backup files
+*.bak
+*.backup
+
+
+*.swp
+
+
+# FIles to be modified
+server/keys/test_rmap.py
+server/routes/
+server/src/watermarking_metatada.py
+server/utils/
+rmap_test.py
