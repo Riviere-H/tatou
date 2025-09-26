@@ -917,21 +917,11 @@ def create_app():
                 if f"{combined:032x}" == session_secret:
                     identity = ident
                     break
-
-	    if not identity:
-		return jsonify({"error": "Failed to resolve client identity"}), 500
-		
         
-            # Select watermarking method
-	    method = request.args.get("method", "phantom").lower()
-	    watermarks_dir = app.config["STORAGE_DIR"] / "rmap_watermarks"
-	    watermarks_dir.mkdir(parents=True, exist_ok=True)
-	    output_path = None
-
-	    if watermark_method == "phantom":
+             # Create watermarked PDF
                 from phantom_annotation_watermark import PhantomAnnotationWatermark
                 
-		# initiate watermarker
+		     # initiate watermarker
                 watermarker = PhantomAnnotationWatermark()
             
                 # Sample PDF for RMAP 
@@ -951,22 +941,6 @@ def create_app():
                     watermark_key,
                     client_identity=identity
                 )
-		
-		output_path = watermarks_dir / f"{session_secret}_phantom.pdf"
-		with open(output_path, "wb") as f:
-			f.write(watermarked_pfd)
-
-	    elif watermark_method == "metadata":
-		from watermarking_metadata import generate_metadata_watermarked_pdf
-		
-		template_pdf = "/app/storage/rmap_sample.pdf"
-		output_path = watermarks_dir / f"{session_secret}_metadata.pdf"
-		generate_matadata_watermarked_pdf(
-			template_pdf=str(template_pdf),
-			output_pdf=str(output_pdf),
-			group_id=identity,
-			session_secret=session_secret
-		)
             
                 # Store watermarked PDF in storage dir
                 watermarks_dir = app.config["STORAGE_DIR"] / "rmap_watermarks"
