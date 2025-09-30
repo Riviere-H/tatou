@@ -43,7 +43,7 @@ from watermarking_method import (
 )
 from add_after_eof import AddAfterEOF
 
-# from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
+from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
 
 from phantom_annotation_watermark import PhantomAnnotationWatermark
 
@@ -53,7 +53,7 @@ from phantom_annotation_watermark import PhantomAnnotationWatermark
 
 METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
-    # UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
+    UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
     PhantomAnnotationWatermark.name: PhantomAnnotationWatermark()
 }
 """Registry of available watermarking methods.

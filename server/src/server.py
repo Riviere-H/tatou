@@ -1,6 +1,7 @@
 import os
 import io
 import hashlib
+import importlib.util
 import datetime as dt
 from pathlib import Path
 from functools import wraps
@@ -14,7 +15,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
 from io import BytesIO
-from PyPDF2 import PdfReader, PdfWriter
 
 # SECURITY: Disabled due to unsafe deserialization vulnerability
 # import pickle as _std_pickle
@@ -407,12 +407,12 @@ def create_app():
         if isinstance(row.sha256_hex, str) and row.sha256_hex:
             resp.set_etag(row.sha256_hex.lower())
 
-        resp.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
+            resp.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
         return resp
     
     # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
     @app.get("/api/get-version/<link>")
-    def get_version(link: str):cx        
+    def get_version(link: str):
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -544,19 +544,19 @@ def create_app():
             "note": delete_error,   # null/omitted if everything was fine
         }), 200
         
-	def add_metadata_to_pdf_bytes(pdf_bytes: bytes, group_id: str, session_secret: str) -> bytes:
-		reader = PdfReader(BytesIO(pdf_bytes))
-		writer = PdfWriter()
-		for page in reader.pages:
-			writer.add_page(page)
-		writer.add_metadata({
+        def add_metadata_to_pdf_bytes(pdf_bytes: bytes, group_id: str, session_secret: str) -> bytes:
+                reader = PdfReader(BytesIO(pdf_bytes))
+                writer = PdfWriter()
+                for page in reader.pages:
+                        writer.add_page(page)
+                        writer.add_metadata({
 			"/Author": f"{group_id}",
 			"/Title": "Watermarked PDF",
 			"/Keywords": f"session={session_secret}"
 		})
-		out = BytesIO()
-		writer.write(out)
-		return out.getvalue()
+                out = BytesIO()
+                writer.write(out)
+                return out.getvalue()
         
     # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
     @app.post("/api/create-watermark")
@@ -708,21 +708,27 @@ def create_app():
     @app.post("/api/load-plugin")
     @require_auth
     def load_plugin():
-        # SECURITY MITIGATION: plugin loading is diabled temporarily to avoid insecure deserialization (pickle/dill leads to RCE). 
-        # Re-enable only after implementing signed plugins or alternative safe loading
-        return jsonify({"error": "plugin loading is temporarily disabled for security"}), 403
         """
         Load a serialized Python class implementing WatermarkingMethod from
         STORAGE_DIR/files/plugins/<filename>.{pkl|dill} and register it in wm_mod.METHODS.
         Body: { "filename": "MyMethod.pkl", "overwrite": false }
+    
+        Phase2 Update: Securely load a plugin from a Python file instead of unsafe pickle/dill to prevent deserialization vulnerability.
+        Body:{"file" "method_name" "overwrite"}
+        File: plugin Python file (.py)
+        method_name: name under which to register the plugin
+        overwrite: boolean, allow overwriting existing method
         """
-        """
-        payload = request.get_json(silent=True) or {}
-        filename = (payload.get("filename") or "").strip()
-        overwrite = bool(payload.get("overwrite", False))
+        
+        file = request.files.get("file")
+        overwrite = request.form.get("overwrite", "false").lower() == "true"
 
-        if not filename:
-            return jsonify({"error": "filename is required"}), 400
+        if not file:
+            return jsonify({"error": "Missing file"}), 400
+
+        filename = secure_filename(file.filename)
+        if not filename.endswith(".py"):
+            return jsonify({"error": "Only .py plugins are supported"}), 400
 
         # Locate the plugin in /storage/files/plugins (relative to STORAGE_DIR)
         storage_root = Path(app.config["STORAGE_DIR"])
@@ -734,14 +740,20 @@ def create_app():
             return jsonify({"error": f"plugin path error: {e}"}), 500
 
         if not plugin_path.exists():
-            return jsonify({"error": f"plugin file not found: {safe}"}), 404
-
-        # Unpickle the object (dill if available; else std pickle)
+            return jsonify({"error": f"plugin file not found: {filename}"}), 404
+      
+        # Safe import instead of pickle/dill
         try:
-            with plugin_path.open("rb") as f:
-                obj = _pickle.load(f)
+            spec = importlib.util.spec_from_file_location("plugin_module", plugin_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            if not hasattr(module, "WatermarkingMethod"):
+                return jsonify({"error": "Plugin must define WatermarkingMethod class"}), 400
+
+            obj = module.WatermarkMethod
         except Exception as e:
-            return jsonify({"error": f"failed to deserialize plugin: {e}"}), 400
+            return jsonify({"error": f"plugin load error: {e}"}), 400
 
         # Accept: class object, or instance (we'll promote instance to its class)
         if isinstance(obj, type):
@@ -762,6 +774,10 @@ def create_app():
             is_ok = has_api
         if not is_ok:
             return jsonify({"error": "plugin does not implement WatermarkingMethod API (add_watermark/read_secret)"}), 400
+
+        # Check overwrite policy
+        if method_name in WMUtils.METHODS and not overwrite:
+            return jsonify({"error": f"Method {method_name} already exists"}), 400
             
         # Register the class (not an instance) so you can instantiate as needed later
         WMUtils.METHODS[method_name] = cls()
@@ -773,7 +789,6 @@ def create_app():
             "class_qualname": f"{getattr(cls, '__module__', '?')}.{getattr(cls, '__qualname__', cls.__name__)}",
             "methods_count": len(WMUtils.METHODS)
         }), 201
-        """
     
     
     # GET /api/get-watermarking-methods -> {"methods":[{"name":..., "description":...}, ...], "count":N}
@@ -917,8 +932,19 @@ def create_app():
                 if f"{combined:032x}" == session_secret:
                     identity = ident
                     break
+<<<<<<< HEAD
         
              # Create watermarked PDF
+=======
+
+            if not identity:
+                return jsonify({"error": "Failed to resolve client identity"}), 500
+
+        
+            # Select watermarking method
+            try:
+
+>>>>>>> 8cc7800 (Phase2: Security Fixes: change insecure deserialization(load-plugin endpoint) to safe load with with importlib, only Python source file allowed; Rewrote unsafe watermarking method, no subprocess module)
                 from phantom_annotation_watermark import PhantomAnnotationWatermark
                 
 		     # initiate watermarker
@@ -941,19 +967,19 @@ def create_app():
                     watermark_key,
                     client_identity=identity
                 )
-            
+
                 # Store watermarked PDF in storage dir
                 watermarks_dir = app.config["STORAGE_DIR"] / "rmap_watermarks"
                 watermarks_dir.mkdir(parents=True, exist_ok=True)
-            
-                output_path = watermarks_dir / f"{session_secret}.pdf"
+		
+                output_path = watermarks_dir / f"{session_secret}_phantom.pdf"
                 with open(output_path, "wb") as f:
                     f.write(watermarked_pdf)
             
                 # Create database record
                 try:
                     with get_engine().begin() as conn:
-                        # First check if exists document record for RMAP watermark
+                    # First check if exists document record for RMAP watermark
                         rmap_doc = conn.execute(
                             text("SELECT id FROM Documents WHERE name = 'RMAP_Sample_Document' LIMIT 1")
                         ).first()
