@@ -22,6 +22,32 @@ COPY flag /app/flag
 COPY entrypoint.sh /app/entrypoint.sh
 RUN pip install --no-cache-dir -e .
 
+# ----- Create a non-privileged use ------- #
+# Use system group/user
+# Create group and user without home, no-login
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+# Ensure entrypoint is executable so non-root can run it
+RUN chmod +x /app/entrypoint.sh
+
+# Set basic ownership
+RUN chown -R appuser:appuser /app
+
+# Create storage dirs with permissions at build time
+RUN mkdir -p /app/storage/files /app/storage/rmap_watermarks \
+ && chown -R appuser:appuser /app/storage \
+ && chmod 755 /app/storage \
+ && chmod 775 /app/storage/files /app/storage/rmap_watermarks
+
+# Basic secure permissions
+RUN find /app/src -type f -exec chmod 644 {} \; \
+ && find /app/src -type d -exec chmod 755 {} \; \
+ && chmod 644 /app/pyproject.toml \
+ && chmod 644 /app/flag
+
+# Switch to non-root user for runtime 
+USER appuser
+
 EXPOSE 5000
 
 # Default command runs the web server

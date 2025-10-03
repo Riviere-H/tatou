@@ -5,6 +5,9 @@ import importlib.util
 import datetime as dt
 from pathlib import Path
 from functools import wraps
+import re
+import time
+from typing import Any, Dict
 
 from flask import Flask, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
@@ -34,13 +37,285 @@ import json
 from rmap.identity_manager import IdentityManager
 from rmap.rmap import RMAP
 
+
+# ----- Input validation -----
+def validate_email(email: str) -> bool:
+    # Validate email format
+    if not email or not isinstance(email, str):
+        return False
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(email_pattern, email))
+
+def validate_username(username: str) -> bool:
+    # Validate username format: allow letters, numbers, underscore, dash, length 3-50
+    if not username or not isinstance(username, str):
+        return False
+    username_pattern = r'^[a-zA-Z0-9_-]{3,50}$'
+    return bool(re.match(username_pattern, username))
+
+
+def validate_password(password: str) -> bool:
+    # Validate password strength: At least 10 characters, containing letters and numbers
+    if not password or not isinstance(password, str):
+        return False
+    if len(password) < 10:
+        return False
+
+    has_lower = any(c.islower() for c in password)
+    has_upper = any(c.isupper() for c in password)
+    has_digit = any(c.isdigit() for c in password)
+    
+    type_count = sum([has_lower, has_upper, has_digit])
+    return type_count >=2
+
+
+def sanitize_filename(filename: str) -> str:
+    # Sanitize filename to prevent path traversal
+    if not filename:
+        return ""
+    safe_name = secure_filename(filename)
+    # Prevent empty filename or hidden files starting with dot
+    if not safe_name or safe_name.startswith('.'):
+        return "document"
+    return safe_name
+
+def validate_integer(value: Any, min_val: int = None, max_val: int = None) -> bool:
+    # Validate integer range
+    try:
+        int_val = int(value)
+        if min_val is not None and int_val < min_val:
+            return False
+        if max_val is not None and int_val > max_val:
+            return False
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def contains_sql_injection_pattern(text: str) -> bool:
+    # Detect SQL injection patterns
+    if not text or not isinstance(text, str):
+        return False
+
+    sql_patterns = [
+        r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|EXEC)\b)",
+        r"(--|\#|;)",
+        r"(\b(OR|AND)\b.*=)",
+        r"('|\")",
+    ]
+
+    for pattern in sql_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return True
+    return False
+
+def validate_safe_input(text: str, field_name: str) -> tuple[bool, str]:
+    # Verify the security of input
+    if not text or not isinstance(text, str):
+        return False, f"{field_name} must be a string"
+
+    if contains_sql_injection_pattern(text):
+        return False, f"Invalid {field_name} format"
+
+    return True, ""
+
+
+def validate_uploaded_file(file) -> tuple[bool, str]:
+    # Validate the security of uploaded file
+    if not file or not hasattr(file, 'filename'):
+        return False, "No file provided"
+
+    if file.filename == '':
+        return False, "No file selected"
+
+    safe_filename = sanitize_filename(file.filename)
+    if not safe_filename:
+        return False, "Invalid filename"
+
+    # File extension validation: only allow PDF
+    allowed_extensions = {'.pdf'}
+    file_extension = Path(safe_filename).suffix.lower()
+    if file_extension not in allowed_extensions:
+        return False, f"File type not allowed. Allowed: {','.join(allowed_extensions)}"
+
+    # File size limit: 10MB
+    file.seek(0,2)
+    file_size = file.tell()
+    file.seek(0)
+
+    max_size = 30 * 1024 * 1024
+    if file_size > max_size:
+        max_size_mb = max_size // (1024 * 1024)
+        return False, f"File too large. Maximum size: {max_size_mb}MB"
+
+    if file_size == 0:
+        return False, "File is empty"
+
+    return True, safe_filename
+
+
+def validate_json_payload(required_fields: dict = None, optional_fields: dict = None) -> callable:
+    # Decorator: Validate JSON payload
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not request.is_json:
+                return jsonify({"error": "Content-Type must be application/json"}), 400
+
+            payload = request.get_json(silent=True)
+            if payload is None:
+                return jsonify({"error": "Invalid JSON payload"}), 400
+
+            if required_fields:
+                for field, expected_type in required_fields.items():
+                    if field not in payload:
+                        return jsonify({"error": f"Missing required field: {field}"}), 400
+                    if not isinstance(payload[field], expected_type):
+                        return jsonify({"error": f"Field '{field}' must be {expected_type.__name__}"}), 400
+
+            if optional_fields:
+                for field, expected_type in optional_fields.items():
+                    if field in payload and not isinstance(payload[field], expected_type):
+                        return jsonify({"error": f"Field '{field}' must be {expected_type.__name__}"}), 400
+
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+class TokenBlacklist:
+    """ Simple token blacklist management """
+
+    def __init__(self):
+        self.blacklisted_tokens = {}
+
+    # Add token to blacklist
+    def add(self, token: str, ttl: int = 3600):
+        expiry = time.time() + ttl
+        self.blacklisted_tokens[token] = expiry
+
+        # Automatic cleanup of expired tokens, triggered on each add
+        self.cleanup()
+
+    # Check if token is in blacklist
+    def is_blacklisted(self, token: str) -> bool:
+        expiry = self.blacklisted_tokens.get(token)
+        if expiry and expiry > time.time():
+            return True
+        elif expiry:
+            del self.blacklisted_tokens[token]
+        return False
+
+    def cleanup(self):
+        current_time = time.time()
+        expired_tokens = [
+            token for token, expiry in self.blacklisted_tokens.items()
+            if expiry <= current_time
+        ]
+        for token in expired_tokens:
+            del self.blacklisted_tokens[token]
+
+        if expired_tokens:
+            app.logger.info(f"Cleaned up {len(expired_tokens)} expired blacklisted tokens")
+
+
+class RateLimiter:
+    """ Simple in-memory rate limiter """
+    def __init__(self):
+        self.attempts = {}
+
+    def is_rate_limited(self, key: str, max_attempts: int, window_seconds: int) -> bool:
+        # Check if rate limit is exceeded
+        current_time = time.time
+
+        # Clean up old recors
+        if key in self.attempts:
+            self.attempts[key] = [
+                ts for ts in self.attempts[key]
+                if ts > current_time - window_seconds
+            ]
+
+        # Check attempt count
+        if key not in self.attempts:
+            self.attempts[key] = []
+ 
+        if len(self.attempts[key]) >= max_attempts:
+            return True
+
+        self.attempts[key].append(current_time)
+        return False
+
+    def get_remaining_attempts(self, key: str, max_attempts: int, window_seconds: int) -> int:
+        current_time = time.time()
+
+        if key in self.attempts:
+            self.attempts[key] = [
+                ts for ts in self.attempts[key]
+                if ts > current_time - window_seconds
+            ]
+            return max(0, max_attempts - len(self.attempts[key]))
+
+        return max_attempts
+
+rate_limiter = RateLimiter()
+
+
+def get_client_fingerprint(request) -> str:
+    """ Generate client fingerprint based on IP and User-Agent """
+    client_ip = request.remote_addr or "unknown"
+    user_agent = request.headers.get("User-Agent", "unknown")
+
+    fingerprint_data = f"{client_ip}: {user_agent}"
+    return hashlib.sha256(fingerprint_data.encode()).hexdigest()
+
+
 def create_app():
     app = Flask(__name__)
 
+    # ----- Add security headers middleware -----
+    @app.after_request
+    def set_security_headers(response):
+        # Prevent clickjacking
+        response.headers['X-Frame-Options'] = 'DENY'
+        # Prevent MIME type sniffing 
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        # Enable browser XSS protection
+        response.headers['X-XSS-Protection'] = '1; mode=block'
+        # Control referrer leakage
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+
+        # Content Security Policy
+        csp_policy = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "     # allow inline JS
+            "style-src 'self' 'unsafe-inline'; "      # allow inline CSS
+            "img-src 'self' data:; "                  # allow base64 images
+            "connect-src 'self'; "                    # restrict XHR, WS
+            "font-src 'self'; "                       # allow fonts
+            "object-src 'none'; "                     # disallow plugins
+            "media-src 'self'; "                      # restrict audio, vedio
+            "frame-src 'none'; "                      # disallow iframes
+            "base-uri 'self'; "                       # restrict <base>
+            "form-action 'self'; "                    # restrict form submission
+            "frame-ancestors 'none'; "                # disallow framing
+            "block-all-mixed-content"                 # block mixed HTTP/HTTPS
+        )   
+        response.headers['Content-Security-Policy'] = csp_policy
+
+        return response
+
     # --- Config ---
+    # Use stronger secret key
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
+
+    # Strengthen JWT configuration
+    app.config["TOKEN_TTL_SECONDS"] = int(os.environ.get("TOKEN_TTL_SECONDS", "3600"))
+    app.config["REFRESH_TOKEN_TTL"] = int(os.environ.get("REFRESH_TOKEN_TTL", "86400"))
+
+    # Security configuration
+    app.config["SESSION_COOKIE_SECURE"] = True       # Prevent XSS from accessing cookies
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"    # CSFR Protection
+
     app.config["STORAGE_DIR"] = Path(os.environ.get("STORAGE_DIR", "./storage")).resolve()
-    app.config["TOKEN_TTL_SECONDS"] = int(os.environ.get("TOKEN_TTL_SECONDS", "86400"))
 
     app.config["DB_USER"] = os.environ.get("DB_USER", "tatou")
     app.config["DB_PASSWORD"] = os.environ.get("DB_PASSWORD", "tatou")
@@ -103,12 +378,38 @@ def create_app():
             if not auth.startswith("Bearer "):
                 return _auth_error("Missing or invalid Authorization header")
             token = auth.split(" ", 1)[1].strip()
+
+            if token_blacklist.is_blacklisted(token):
+                return _auth_error("Token has been revoked")
+
             try:
                 data = _serializer().loads(token, max_age=app.config["TOKEN_TTL_SECONDS"])
             except SignatureExpired:
                 return _auth_error("Token expired")
             except BadSignature:
                 return _auth_error("Invalid token")
+
+            # Verify client fingerprint
+            current_fingerprint = get_client_fingerprint(request)
+            if data.get("fingerprint") != current_fingerprint:
+                app.logger.warning(f"Token fingerprint mismatch for user {data.get('login')}")
+                return _auth_error("Session context changed. Please login again.")
+
+
+            # Verify user still exists, prevent deleted users from using old tokens
+            try:
+                with get_engine().connect() as conn:
+                    user_exists = conn.execute(
+                         test("SELECT id FROM Users WHERE id = :id AND login = :login"),
+                         {"id": int(data["uid"]), "login": data["login"]}
+                    ).first()
+                if not user_exists:
+                    return _auth_error("User no longer exists")
+
+            except Exception as e:
+                app.logger.error(f"User validation failed: {e}")
+                return _auth_error("Authentication validation failed")
+
             g.user = {"id": int(data["uid"]), "login": data["login"], "email": data.get("email")}
             return f(*args, **kwargs)
         return wrapper
@@ -147,8 +448,19 @@ def create_app():
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
         password = payload.get("password") or ""
-        if not email or not login or not password:
-            return jsonify({"error": "email, login, and password are required"}), 400
+        
+        if not validate_email(email):
+            return jsonify({"error": "Invalid email format"}), 400
+
+        is_safe, error_msg = validate_safe_input(login, "username")
+        if not is_safe:
+            return jsonify({"error": error_msg}), 400
+
+        if not validate_username(login):
+            return jsonify({"error": "Invalid username format. Use 3-50 characters: letters, numbers, _, -"}), 400
+
+        if not validate_password(password):
+            return jsonify({"error": "Password must be at least 10 charcaters and contain at least 2 charcater types (lowercase, uppercase, digits)"}), 400
 
         hpw = generate_password_hash(password)
 
@@ -172,12 +484,27 @@ def create_app():
 
     # POST /api/login {login, password}
     @app.post("/api/login")
+    @validate_json_payload(required_fields={"email": str, "password": str})
     def login():
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
+
         if not email or not password:
             return jsonify({"error": "email and password are required"}), 400
+
+        client_ip = request.remote_addr
+        app.logger.info(f"Login attempt from {client_ip} for email: {email}")
+        rate_limit_key = f"login:{client_ip}:{email}"
+
+        # Rate limit: maximum 5 attempts per minute per IP-email combination
+        if rate_limiter.is_rate_limited(rate_limit_key, max_attempts=5, window_seconds=60):
+            remaining = rate_limiter.get_remaining_attempts(rate_limit_key, 5, 60)
+            app.logger.warning(f"Rate limit exceed for {email} from {client_ip}")
+            return jsonify({
+                "error": f"Too many login attempts.Try again in {60} seconds.",
+                "remaining_attempts": 0
+            }), 429
 
         try:
             with get_engine().connect() as conn:
@@ -186,12 +513,36 @@ def create_app():
                     {"email": email},
                 ).first()
         except Exception as e:
+            app.logger.error(f"Database error during login: {str(e)}")
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row or not check_password_hash(row.hpassword, password):
-            return jsonify({"error": "invalid credentials"}), 401
+            remaining = rate_limiter.get_remaining_attempts(rate_limit_key, 5, 60)
+            app.logger.warning(f"Failed login attempt from {client_ip} for email: {email}")
+            return jsonify({
+                "error": "invalid credentials",
+                "remaining_attempts": remaining
+            }), 401
 
-        token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
+        # Generate client fingerprint
+        client_fingerprint = get_client_fingerprint(request)
+
+        token_data = {
+            "uid": int(row.id),
+            "login": row.login,
+            "email": row.email,
+            "ip": client_ip,
+            "fingerprint": client_fingerprint,
+            "login_time": dt.datetime.utcnow().isoformat(),
+            "user_agent_hash": hashlib.sha256(request.headers.get("User-Agent", "").encode()).hexdigest()
+        }
+
+        token = _serializer().dumps(token_data)
+        # Reset rate limit after successful login
+        if rate_limit_key in rate_limiter.attempts:
+            del rate_limiter.attempts[rate_limit_key]
+
+        app.logger.info(f"Successful login for user_id: {row.id} from {client_ip}")
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
     # POST /api/upload-document  (multipart/form-data)
@@ -201,17 +552,19 @@ def create_app():
         if "file" not in request.files:
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
         file = request.files["file"]
-        if not file or file.filename == "":
-            return jsonify({"error": "empty filename"}), 400
+        
+        is_valid, message = validate_uploaded_file(file)
+        if not is_valid:
+            return jsonify({"error": message}), 400
 
-        fname = file.filename
+        safe_filename = message
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
         user_dir.mkdir(parents=True, exist_ok=True)
 
         ts = dt.datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
-        final_name = request.form.get("name") or fname
-        stored_name = f"{ts}__{fname}"
+        final_name = request.form.get("name") or safe_filename
+        stored_name = f"{ts}__{safe_filename}"
         stored_path = user_dir / stored_name
         file.save(stored_path)
 
@@ -346,6 +699,7 @@ def create_app():
             "link": r.link,
             "intended_for": r.intended_for,
             "method": r.method,
+            "secret": r.secret,
         } for r in rows]
         return jsonify({"versions": versions}), 200
     
@@ -932,25 +1286,17 @@ def create_app():
                 if f"{combined:032x}" == session_secret:
                     identity = ident
                     break
-<<<<<<< HEAD
-        
-             # Create watermarked PDF
-=======
-
-            if not identity:
-                return jsonify({"error": "Failed to resolve client identity"}), 500
 
         
             # Select watermarking method
             try:
 
->>>>>>> 8cc7800 (Phase2: Security Fixes: change insecure deserialization(load-plugin endpoint) to safe load with with importlib, only Python source file allowed; Rewrote unsafe watermarking method, no subprocess module)
                 from phantom_annotation_watermark import PhantomAnnotationWatermark
                 
-		     # initiate watermarker
+	        # initiate watermarker
                 watermarker = PhantomAnnotationWatermark()
             
-                # Sample PDF for RMAP 
+                # Sample PDF for RMAP
                 sample_pdf_path = "/app/storage/rmap_sample.pdf"
             
                 # Create watermarked PDF
@@ -1041,6 +1387,77 @@ def create_app():
         except Exception as e:
             app.logger.error(f"RMAP get-link error: {e}")
             return jsonify({"error": "Internal server error"}), 500
+
+
+    # POST /api/refresh-token
+    @app.post("/api/refresh-token")
+    @require_auth
+    def refresh_token():
+        """ Refresh access token """
+        try:
+            new_token = _serializer().dumps({
+                "uid": g.user["id"],
+                "login": g.user["login"],
+                "email": g.user.get("email")
+            })
+
+            return jsonify({
+                "token": new_token,
+                "token_type": "bearer",
+                "expires_in": app.config["TOKEN_TTL_SECONDS"]
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Token refresh failed: {e}")
+            return jsonify({"error": "Token refresh failed"}), 500 
+
+
+    # POST /api/logout
+    @app.post("/api/logout")
+    @require_auth
+    def logout():
+        """ Log out user, add token to blacklist """
+        try:
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header.split(" ", 1)[1].strip()
+
+            token_blacklist.add(token, app.config["TOKEN_TTL_SECONDS"])
+            
+            return jsonify({"message": "Successfully logged out"}), 200
+
+        except Exception as e:
+            app.logger,error(f"Logout failed: {e}")
+            return jsonify({"error": "Logout failed"}), 500
+
+    # POST /api/logout-all
+    @app.post("/api/logout-all")
+    @require_auth
+    def logout_all():
+        """ Log out user from all devices by changing password """
+        payload = request.get_json(silent=True) or {}
+        new_password = payload.get("new_password")
+        
+        if not new_password or not validate_password(new_password):
+            return jsonify({"error": "Valid new password is required"}), 400
+
+        try:
+            hpw = generate_password_hash(new_password)
+
+            with get_engine().begin() as conn:
+                conn.execute(
+                    text("UPDATE Users SET hpassword = :hpw WHERE id = :id"),
+                    {"hpw": hpw, "id": int(g.user["id"])}
+                )
+
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header.split(" ",1)[1].strip()
+            token_blacklist.add(token, app.config["TOKEN_TTL_SECONDS"])
+
+            return jsonify({"message": "All sessions logged out. Please login with new password."}), 200
+
+        except Exception as e:
+            app.logger.error(f"Logout all failed: {e}")
+            return jsonify({"error": "Logout all failed"}), 500
 
     return app
 
