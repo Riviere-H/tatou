@@ -217,6 +217,7 @@ class TokenBlacklist:
         if expired_tokens:
             app.logger.info(f"Cleaned up {len(expired_tokens)} expired blacklisted tokens")
 
+token_blacklist = TokenBlacklist()
 
 class RateLimiter:
     """ Simple in-memory rate limiter """
@@ -270,6 +271,54 @@ def get_client_fingerprint(request) -> str:
 
 def create_app():
     app = Flask(__name__)
+
+    # ----- Error handling & security logging -----
+    IS_DEBUG = os.environ.get('FLASK_DEBUG', '0') == '1'
+
+    def safe_error_handler(f):
+        """
+        Unified error handler decorator
+        - Prevent system info leakage
+        - Log detailed errors
+        - Return generic safe messages
+        """
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            try:
+                return f(*args, **kwargs)
+            except ValueError as e:
+                # Input validation error: safe to return details
+                return jsonify({"error": str(e)}), 400
+            except (SecretNotFoundError, InvalidKeyError) as e:
+                # Watermark-related errors: keep original message
+                return jsonify({"error": str(e)}), 400
+            except Exception as e:
+                # Unknown errors: log details, return generic message
+                app.logger.error(f"Error in {f.__name__}: {str(e)}")
+                if IS_DEBUG:
+                    return jsonify({"error": "Internal server error", "debug_info": str(e)}), 500
+                return jsonify({"error": "Internal server error"}), 500
+        return decorated_function
+
+    def log_sensitive_operation(operation: str, target: str, user: dict):
+        """
+        Log sensitive operations
+        """
+        app.logger.info(
+            f"SENSITIVE_OPERATION: {operation} on {target} by user {user.get('login')} (ID: {user.get('id')})"
+        )
+
+    # ----- Global Error Handlers -----
+    @app.errorhandler(404)
+    def not_found_error(error):
+        app.logger.warning(f"404 Not Found: {request.url}")
+        return jsonify({"error": "Resource not found"}), 404
+
+    @app.errorhandler(405)
+    def method_not_allowed_error(error):
+        app.logger,warning(f"405 Method Not Allowed: {request.method} {request.url}")
+        return jsonify({"error": "Method not allowed"}), 405
+
 
     # ----- Add security headers middleware -----
     @app.after_request
@@ -389,6 +438,7 @@ def create_app():
             except BadSignature:
                 return _auth_error("Invalid token")
 
+
             # Verify client fingerprint
             current_fingerprint = get_client_fingerprint(request)
             if data.get("fingerprint") != current_fingerprint:
@@ -400,14 +450,15 @@ def create_app():
             try:
                 with get_engine().connect() as conn:
                     user_exists = conn.execute(
-                         test("SELECT id FROM Users WHERE id = :id AND login = :login"),
+                         text("SELECT id FROM Users WHERE id = :id AND login = :login"),
                          {"id": int(data["uid"]), "login": data["login"]}
                     ).first()
                 if not user_exists:
+                    app.logger.warning(f"Auth failed: User {data.get('login')} (ID: {data.get('uid')}) not found in database")
                     return _auth_error("User no longer exists")
 
             except Exception as e:
-                app.logger.error(f"User validation failed: {e}")
+                app.logger.error(f"User validation failed with exception: {str(e)}")
                 return _auth_error("Authentication validation failed")
 
             g.user = {"id": int(data["uid"]), "login": data["login"], "email": data.get("email")}
@@ -478,8 +529,10 @@ def create_app():
         except IntegrityError:
             return jsonify({"error": "email or login already exists"}), 409
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"User creation database error: {str(e)}")
+            return jsonify({"error": "Account creation failed"}), 503
 
+        app.logger.info(f"USER_REGISTRATION: {login} ({email}) from IP: {request.remote_addr}")
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
@@ -514,7 +567,7 @@ def create_app():
                 ).first()
         except Exception as e:
             app.logger.error(f"Database error during login: {str(e)}")
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            return jsonify({"error": "Database Operation failed "}), 503
 
         if not row or not check_password_hash(row.hpassword, password):
             remaining = rate_limiter.get_remaining_attempts(rate_limit_key, 5, 60)
@@ -548,6 +601,7 @@ def create_app():
     # POST /api/upload-document  (multipart/form-data)
     @app.post("/api/upload-document")
     @require_auth
+    @safe_error_handler
     def upload_document():
         if "file" not in request.files:
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
@@ -596,8 +650,10 @@ def create_app():
                     {"id": did},
                 ).one()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
+        log_sensitive_operation("document_upload", f"document_{did}", g.user, f"size:{size} bytes")
         return jsonify({
             "id": int(row.id),
             "name": row.name,
@@ -609,6 +665,7 @@ def create_app():
     # GET /api/list-documents
     @app.get("/api/list-documents")
     @require_auth
+    @safe_error_handler
     def list_documents():
         try:
             with get_engine().connect() as conn:
@@ -622,7 +679,8 @@ def create_app():
                     {"uid": int(g.user["id"])},
                 ).all()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         docs = [{
             "id": int(r.id),
@@ -639,6 +697,7 @@ def create_app():
     @app.get("/api/list-versions")
     @app.get("/api/list-versions/<int:document_id>")
     @require_auth
+    @safe_error_handler
     def list_versions(document_id: int | None = None):
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
@@ -661,7 +720,8 @@ def create_app():
                     {"glogin": str(g.user["login"]), "did": document_id},
                 ).all()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         versions = [{
             "id": int(r.id),
@@ -677,6 +737,7 @@ def create_app():
     # GET /api/list-all-versions
     @app.get("/api/list-all-versions")
     @require_auth
+    @safe_error_handler
     def list_all_versions():
         try:
             with get_engine().connect() as conn:
@@ -691,7 +752,8 @@ def create_app():
                     {"glogin": str(g.user["login"])},
                 ).all()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         versions = [{
             "id": int(r.id),
@@ -707,8 +769,9 @@ def create_app():
     @app.get("/api/get-document")
     @app.get("/api/get-document/<int:document_id>")
     @require_auth
+    @safe_error_handler
     def get_document(document_id: int | None = None):
-    
+        log_sensitive_operation("document_downloaded", f"document_{document_id}", g.user)
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
@@ -729,7 +792,8 @@ def create_app():
                     {"id": document_id, "uid": int(g.user["id"])},
                 ).first()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         # Don’t leak whether a doc exists for another user
         if not row:
@@ -779,7 +843,8 @@ def create_app():
                     {"link": link},
                 ).first()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         # Don’t leak whether a doc exists for another user
         if not row:
@@ -832,7 +897,10 @@ def create_app():
     # DELETE /api/delete-document  (and variants)
     @app.route("/api/delete-document", methods=["DELETE", "POST"])  # POST supported for convenience
     @app.route("/api/delete-document/<document_id>", methods=["DELETE"])
+    @require_auth
+    @safe_error_handler
     def delete_document(document_id: int | None = None):
+        log_sensitive_operation("document_delete", f"document_{document_id}", g.user)
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
             document_id = (
@@ -849,8 +917,8 @@ def create_app():
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
-                    text("SELECT * FROM Documents WHERE id = :id"),
-                    {"id": doc_id}
+                    text("SELECT * FROM Documents WHERE id = :id AND ownerid = :uid"),
+                    {"id": doc_id, "uid": int(g.user["id"])}
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
@@ -916,7 +984,9 @@ def create_app():
     @app.post("/api/create-watermark")
     @app.post("/api/create-watermark/<int:document_id>")
     @require_auth
+    @safe_error_handler
     def create_watermark(document_id: int | None = None):
+        log_sensitive_operation("watermark_creation", f"document_{document_id}", g.user)
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
         if not document_id:
             document_id = (
@@ -952,13 +1022,14 @@ def create_app():
                     text("""
                         SELECT id, name, path
                         FROM Documents
-                        WHERE id = :id
+                        WHERE id = :id AND ownerid = :uid
                         LIMIT 1
                     """),
-                    {"id": doc_id},
+                    {"id": doc_id, "uid": int(g.user["id"])},
                 ).first()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         if not row:
             return jsonify({"error": "document not found"}), 404
@@ -986,7 +1057,8 @@ def create_app():
             if applicable is False:
                 return jsonify({"error": "watermarking method not applicable"}), 400
         except Exception as e:
-            return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
+            app.logger.error(f"Watermark applicability check failed for method {method}: {str(e)}")
+            return jsonify({"error": f"Selected watermarking is not applicable"}), 400
 
         # apply watermark → bytes
         try:
@@ -1000,7 +1072,8 @@ def create_app():
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
                 return jsonify({"error": "watermarking produced no output"}), 500
         except Exception as e:
-            return jsonify({"error": f"watermarking failed: {e}"}), 500
+            app.logger.error(f"Wtermarking failed: {str(e)}")
+            return jsonify({"error": "watermarking operation failed"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
         base_name = Path(row.name or file_path.name).stem
@@ -1061,6 +1134,7 @@ def create_app():
         
     @app.post("/api/load-plugin")
     @require_auth
+    @safe_error_handler
     def load_plugin():
         """
         Load a serialized Python class implementing WatermarkingMethod from
@@ -1073,7 +1147,8 @@ def create_app():
         method_name: name under which to register the plugin
         overwrite: boolean, allow overwriting existing method
         """
-        
+        log_sensitive_operation("plugin_load", "custom_watermark_plugin", g.user)
+
         file = request.files.get("file")
         overwrite = request.form.get("overwrite", "false").lower() == "true"
 
@@ -1107,7 +1182,8 @@ def create_app():
 
             obj = module.WatermarkMethod
         except Exception as e:
-            return jsonify({"error": f"plugin load error: {e}"}), 400
+            app.logger.error(f"Plugin loading failed for file {filename}: {str(e)}")
+            return jsonify({"error": "plugin load failed"}), 400
 
         # Accept: class object, or instance (we'll promote instance to its class)
         if isinstance(obj, type):
@@ -1159,7 +1235,9 @@ def create_app():
     @app.post("/api/read-watermark")
     @app.post("/api/read-watermark/<int:document_id>")
     @require_auth
+    @safe_error_handler
     def read_watermark(document_id: int | None = None):
+        log_sensitive_operation("watermark_read", f"document_{document_id}", g.user)
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
             document_id = (
@@ -1198,7 +1276,8 @@ def create_app():
                     {"id": doc_id},
                 ).first()
         except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
+            app.logger.error(f"Database error: {str(e)}")
+            return jsonify({"error": "Database operation failed"}), 503
 
         if not row:
             return jsonify({"error": "document not found"}), 404
@@ -1224,7 +1303,8 @@ def create_app():
                 key=key
             )
         except Exception as e:
-            return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
+            app.logger.error(f"Watermark reading failed for document {doc_id}: {str(e)}")
+            return jsonify({"error": "Failed to read watermark"}), 400
         return jsonify({
             "documentid": doc_id,
             "secret": secret,
@@ -1250,8 +1330,8 @@ def create_app():
             return jsonify(response)
 
         except Exception as e:
-            app.logger.error(f"RMAP initiate error: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            app.logger.error(f"RMAP initiate handshake failed: {str(e)}")
+            return jsonify({"error": "Authentication handshake failed"}), 500
     
 
     # POST /api/rmap-get-link
@@ -1385,8 +1465,8 @@ def create_app():
                 return jsonify({"error": f"Failed to generate watermarked PDF: {str(e)}"}), 500
 
         except Exception as e:
-            app.logger.error(f"RMAP get-link error: {e}")
-            return jsonify({"error": "Internal server error"}), 500
+            app.logger.error(f"RMAP get-link failed: {str(e)}")
+            return jsonify({"error": "Failed to generate watermarked document"}), 500
 
 
     # POST /api/refresh-token
@@ -1415,6 +1495,7 @@ def create_app():
     # POST /api/logout
     @app.post("/api/logout")
     @require_auth
+    @safe_error_handler
     def logout():
         """ Log out user, add token to blacklist """
         try:
@@ -1432,6 +1513,7 @@ def create_app():
     # POST /api/logout-all
     @app.post("/api/logout-all")
     @require_auth
+    @safe_error_handler
     def logout_all():
         """ Log out user from all devices by changing password """
         payload = request.get_json(silent=True) or {}

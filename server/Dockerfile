@@ -43,7 +43,7 @@ RUN mkdir -p /app/storage/files /app/storage/rmap_watermarks \
 RUN find /app/src -type f -exec chmod 644 {} \; \
  && find /app/src -type d -exec chmod 755 {} \; \
  && chmod 644 /app/pyproject.toml \
- && chmod 644 /app/flag
+ && chmod 600 /app/flag
 
 # Switch to non-root user for runtime 
 USER appuser

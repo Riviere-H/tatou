@@ -28,7 +28,14 @@ services:
 
   db:
     image: mariadb:11.4
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-name-resolve             # Prevent DNS lookup attacks
+      - --local-infile=0                # Disable local file injection
+      - --max_connections=100           # Limit connections to prevent DoS
+      - --sql-mode=STRICT_ALL_TABLES    # Enforce strict SQL mode
+      - --skip-symbolic-links           # Prevent symbolic link attacks
     environment:
       - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
       - MARIADB_DATABASE=tatou
