@@ -39,6 +39,14 @@ RUN mkdir -p /app/storage/files /app/storage/rmap_watermarks \
  && chmod 755 /app/storage \
  && chmod 775 /app/storage/files /app/storage/rmap_watermarks
 
+RUN mkdir -p /app/logs \
+ && chown -R appuser:appuser /app/logs \
+ && chmod 755 /app/logs
+ 
+RUN mkdir -p /tmp/prometheus \
+ && chown appuser:appuser /tmp/prometheus \
+ && chmod 755 /tmp/prometheus
+
 # Basic secure permissions
 RUN find /app/src -type f -exec chmod 644 {} \; \
  && find /app/src -type d -exec chmod 755 {} \; \

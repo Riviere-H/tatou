@@ -1,0 +1,63 @@
+openapi: 3.0.3
+info:
+  title: Tatou - Minimal API for fuzzing (aligned with server)
+  version: "0.1.0"
+servers:
+  - url: http://localhost:5000
+paths:
+  /api/rmap-initiate:
+    post:
+      summary: Initiate RMAP (expects JSON payload with 'payload' field)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payload:
+                  type: string
+                  format: byte
+                  minLength: 10
+              required: ["payload"]
+            example:
+              payload: "LS0tLS1CRUdJTiBQR1AgTUVTU0FHRS0tLS0tCqpoUVJFQ0k4RU5xb0c1Los"
+              # client_nonce: "abc"
+              # other: "value"
+      responses:
+        '200':
+          description: OK (or 201 in your app - adjust if needed)
+        '400':
+          description: Bad request (missing payload)
+        '503':
+          description: RMAP not configured
+        '500':
+          description: Server error
+
+  /api/rmap-get-link:
+    post:
+      summary: Finalize RMAP and return link (expects JSON payload)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payload:
+                  type: string
+                  format: byte
+                  minLength: 10
+              required: ["payload"]
+            example:
+              payload: "RMAP_SECRET_BASE64_BASE64_PLACEHOLDER_ABCD"
+                # job_id: "abcd-1234"
+      responses:
+        '200':
+          description: Link returned
+        '400':
+          description: Bad request
+        '503':
+          description: RMAP not configured
+        '500':
+          description: Server error

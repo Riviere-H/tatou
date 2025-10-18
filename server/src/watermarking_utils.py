@@ -46,6 +46,8 @@ from add_after_eof import AddAfterEOF
 from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
 
 from phantom_annotation_watermark import PhantomAnnotationWatermark
+from meta_svd_watermark import MetaSVDWatermark
+from combo_method import ComboWatermark
 
 # --------------------
 # Method registry
@@ -54,7 +56,9 @@ from phantom_annotation_watermark import PhantomAnnotationWatermark
 METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
-    PhantomAnnotationWatermark.name: PhantomAnnotationWatermark()
+    PhantomAnnotationWatermark.name: PhantomAnnotationWatermark(),
+    MetaSVDWatermark.name: MetaSVDWatermark(),
+    ComboWatermark.name: ComboWatermark()
 }
 """Registry of available watermarking methods.
 

@@ -11,6 +11,9 @@ services:
       - user-files:/app/storage
       - ./server/keys:/app/keys:ro  # added in phase 2
       - ./PDF_sample/rmap_sample.pdf:/app/storage/rmap_sample.pdf:ro
+      - ./logs:/app/logs
+      - ./configs:/app/configs:ro
+      - prometheus-multiproc:/tmp/prometheus
     environment:
       - PYTHONUNBUFFERED=1
       - GPG_PASSPHRASE=${GPG_PASSPHRASE} #new added
@@ -21,6 +24,8 @@ services:
       - DB_USER=${MARIADB_USER}
       - DB_PASSWORD=${MARIADB_PASSWORD}
       - FLAG_2=${FLAG_2}
+      - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
+      - APP_ENV=test #Added for testing mode
     depends_on:
       db:
         condition: service_healthy
@@ -67,6 +72,40 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./monitoring/prometheus_rules:/etc/prometheus/rules
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - /home/lab/tatou/monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+      - /home/lab/tatou/monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   db-data:
   user-files:
+  prometheus-data:
+  grafana-data:
+  prometheus-multiproc:

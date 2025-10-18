@@ -55,4 +55,13 @@ http -v :5000/healthz
 ```
 
 
+### Operational Security Specialization (Specialization D)
 
+This project includes complete security operations capability building:
+
+- Threat modeling and risk assessment
+- Structured logging and audit trails
+- Monitoring metrics and alert configuration
+- Security incident response procedures
+
+Please refer to `docs/` directory for detailed documentation.

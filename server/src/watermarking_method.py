@@ -270,3 +270,4 @@ __all__ = [
     "WatermarkingMethod",
 ]
 
+METHODS = []
