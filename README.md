@@ -54,6 +54,18 @@ http -v :5000/healthz
 # Open your browser at 127.0.0.1:5000 to check if the website is up.
 ```
 
+### Fuzzing & API Robustness (Specialization A)
+
+The RMAP endpoints (`/api/rmap-initiate` and `/api/rmap-get-link`) have been significantly hardened to prevent runtime errors and logic bypasses from malicious input (e.g., malformed Base64, bare JSON primitives, and null values).
+
+Run Non-Regression Tests
+To verify the security fixes, run the dedicated test suite:
+
+```bash
+# Run tests from the project root directory
+pytest server/test/RMAP_Fuzzing_Non-Regression_Tests.py
+```
+
 
 ### Operational Security Specialization (Specialization D)
 
