@@ -1,0 +1,87 @@
+{
+  "services": [
+    {
+      "name": "tatou-db-1",
+      "status": "hours",
+      "ports": "ago Up 47 hours (healthy) 127.0.0.1:3306->3306/tcp"
+    },
+    {
+      "name": "tatou-grafana-1",
+      "status": "hours",
+      "ports": "ago Up 47 hours 0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp"
+    },
+    {
+      "name": "tatou-phpmyadmin-1",
+      "status": "hours",
+      "ports": "ago Up 47 hours 127.0.0.1:8080->80/tcp"
+    },
+    {
+      "name": "tatou-prometheus-1",
+      "status": "47",
+      "ports": "hours ago Up 47 hours 0.0.0.0:9090->9090/tcp, [::]:9090->9090/tcp"
+    },
+    {
+      "name": "tatou-server-1",
+      "status": "hours",
+      "ports": "ago Up 8 hours 0.0.0.0:5000->5000/tcp, [::]:5000->5000/tcp"
+    }
+  ],
+  "active_alerts": [],
+  "flag_status": {
+    "Container flag": {
+      "exists": true,
+      "output": "-rw------- 1 appuser appuser 418 Sep 19 12:05 /app/flag"
+    }
+  },
+  "recent_security_events": [
+    "server-1  | --- Logging error ---",
+    "server-1  | PermissionError: [Errno 13] Permission denied: '/app/logs/app.log' -> '/app/logs/app.log.2025-10-09'",
+    "server-1  |   File \"/app/src/server.py\", line 340, in not_found_error",
+    "server-1  |     log_security_event(\"security_warning\", r\"404 Not Found: {request.url}\")",
+    "server-1  |   File \"/app/src/logger.py\", line 405, in log_security_event",
+    "server-1  |     logger.security_event(event_type, message, **kwargs)",
+    "server-1  |   File \"/app/src/logger.py\", line 256, in security_event",
+    "server-1  |     self.security_logger.info(\"\", extra=log_record)",
+    "server-1  | --- Logging error ---",
+    "server-1  | PermissionError: [Errno 13] Permission denied: '/app/logs/app.log' -> '/app/logs/app.log.2025-10-09'",
+    "server-1  | --- Logging error ---",
+    "server-1  | PermissionError: [Errno 13] Permission denied: '/app/logs/app.log' -> '/app/logs/app.log.2025-10-09'",
+    "server-1  | --- Logging error ---",
+    "server-1  | PermissionError: [Errno 13] Permission denied: '/app/logs/app.log' -> '/app/logs/app.log.2025-10-09'",
+    "server-1  | 2025-10-15 16:26:04,854 - server - ERROR - Exception on /api/upload-document [POST]",
+    "server-1  | TypeError: create_app.<locals>.log_sensitive_operation() takes 3 positional arguments but 4 were given",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | 2025-10-15 16:26:09,287 - server - ERROR - Exception on /api/upload-document [POST]",
+    "server-1  | TypeError: create_app.<locals>.log_sensitive_operation() takes 3 positional arguments but 4 were given",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | --- Logging error ---",
+    "server-1  | PermissionError: [Errno 13] Permission denied: '/app/logs/app.log' -> '/app/logs/app.log.2025-10-09'",
+    "server-1  | 2025-10-15 16:26:48,007 - server - ERROR - Exception on /api/create-watermark/9 [POST]",
+    "server-1  | UnboundLocalError: cannot access local variable 'method' where it is not associated with a value",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | 2025-10-15 16:26:53,860 - server - ERROR - Exception on /api/create-watermark/9 [POST]",
+    "server-1  | UnboundLocalError: cannot access local variable 'method' where it is not associated with a value",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | 2025-10-15 16:26:57,493 - server - ERROR - Exception on /api/create-watermark/9 [POST]",
+    "server-1  | UnboundLocalError: cannot access local variable 'method' where it is not associated with a value",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | 2025-10-15 16:27:14,256 - server - ERROR - Exception on /api/create-watermark/9 [POST]",
+    "server-1  | UnboundLocalError: cannot access local variable 'method' where it is not associated with a value",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | 2025-10-15 16:27:43,577 - server - ERROR - Exception on /api/create-watermark/9 [POST]",
+    "server-1  | UnboundLocalError: cannot access local variable 'method' where it is not associated with a value",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?",
+    "server-1  | 2025-10-15 16:28:43,619 - server - ERROR - Exception on /api/create-watermark/9 [POST]",
+    "server-1  | UnboundLocalError: cannot access local variable 'method' where it is not associated with a value",
+    "server-1  |     except (SecretNotFoundError, InvalidKeyError) as e:",
+    "server-1  | NameError: name 'SecretNotFoundError' is not defined. Did you mean: 'FileNotFoundError'?"
+  ],
+  "network_connections": []
+}

@@ -1,0 +1,51 @@
+
+# File Upload Security Detection Rules
+# Based on File Upload Attack Tree Analysis
+version: 1.0
+created: 01.10
+description: Detection rules for file upload threats
+
+rules:
+  # Rule 1: File Type Mismatch
+  - id: FILE-001
+    name: File Type Validation Failure
+    description: Detect files with mismatched content-type and magic bytes
+    severity: HIGH
+    condition: |
+      COUNT(file_upload_errors{error_type="type_mismatch"}) > 2 PER 5 minutes BY client_ip
+    action: |
+      - log_security_event("file_type_bypass_attempt", "high", {"ip": client_ip})
+      - block_temporary(client_ip, "Suspicious file uploads")
+
+  # Rule 2: PDF Parser Errors
+  - id: FILE-002
+    name: Malformed PDF Detection
+    description: Detect potentially malicious PDF files
+    severity: HIGH
+    condition: |
+      COUNT(pdf_parser_errors) > 3 PER 10 minutes BY client_ip
+    action: |
+      - log_security_event("malicious_pdf_attempt", "high", {"ip": client_ip})
+      - quarantine_file(uploaded_file)
+
+  # Rule 3: Path Traversal Attempts
+  - id: FILE-003
+    name: Path Traversal Detection
+    description: Detect filename containing path traversal sequences
+    severity: CRITICAL
+    condition: |
+      ANY(file_uploads{filename=~".*\\.\\..*"})
+    action: |
+      - log_security_event("path_traversal_attempt", "critical", {"ip": client_ip, "filename": filename})
+      - block_permanent(client_ip, "Path traversal attempt")
+
+  # Rule 4: Watermark Processing Anomalies
+  - id: FILE-004
+    name: Watermark Processing Failures
+    description: Detect potential watermark removal attempts
+    severity: MEDIUM
+    condition: |
+      COUNT(watermark_processing_errors) > 5 PER 15 minutes BY client_ip
+    action: |
+      - log_security_event("watermark_tampering", "medium", {"ip": client_ip})
+      - require_reauth(client_ip)

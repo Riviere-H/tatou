@@ -1,0 +1,126 @@
+digraph TatouArchitecture {
+    rankdir=TB;
+    graph [fontsize=12];
+    node [shape=box, style=filled, fillcolor="#D6EAF8", fontname="Helvetica"];
+    edge [fontname="Helvetica", fontsize=10];
+
+    // External Entities
+    User [shape=ellipse, fillcolor="#FADBD8", label="User"];
+    Attacker [shape=ellipse, fillcolor="#F5B7B1", color="#C0392B", label="Attacker"];
+    OtherGroups [shape=ellipse, fillcolor="#FDEBD0", label="Other Groups"];
+
+    // Frontend Components
+    subgraph cluster_frontend {
+        label = "Frontend Layer";
+        color = "#5DADE2";
+        WebUI [label="Web UI\n(HTML / JS)"];
+        StaticFiles [label="Static Files\n(CSS, JS, HTML)"];
+    }
+
+    // Application Layer
+    subgraph cluster_app {
+        label = "Application Layer";
+        color = "#58D68D";
+        FlaskApp [label="Flask Application\n(Gunicorn)"];
+        APIEndpoints [label="API Endpoints\n(REST + RMAP)"];
+        AuthModule [label="Authentication\n(JWT + RMAP)"];
+        WatermarkEngine [label="Watermark Engine\n(Multiple Methods)"];
+    }
+
+    // Data Layer
+    subgraph cluster_data {
+        label = "Data Layer";
+        color = "#AF7AC5";
+        MariaDB [label="MariaDB\n(User Data, Metadata)"];
+        FileStorage [label="File Storage\n(PDF Documents)"];
+        GPGKeys [label="GPG Keys\n(RMAP Authentication)"];
+        Flags [label="Flag Files\n(CTF Flags)", fillcolor="#F9E79F"];
+    }
+
+    // Infrastructure
+    subgraph cluster_infra {
+        label = "Infrastructure";
+        color = "#D2B4DE";
+        Docker [label="Docker Container\n(non-root runtime user)"];
+        VM [label="University VM\n(isolated network)"];
+    }
+
+    // Trust Boundaries: show roughly internal vs external
+    subgraph cluster_external {
+        label = "External (Untrusted)";
+        color = "#E74C3C";
+        User;
+        Attacker;
+        OtherGroups;
+    }
+
+    subgraph cluster_internal {
+        label = "Internal (Trusted)";
+        color = "#27AE60";
+        cluster_frontend;
+        cluster_app;
+        cluster_data;
+        cluster_infra;
+    }
+
+    // Data Flows (annotated)
+    User -> WebUI [label="HTTP/HTTPS"];
+    User -> APIEndpoints [label="API Calls (HTTPS)"];
+    Attacker -> APIEndpoints [label="Attack vectors", color="#C0392B"];
+    OtherGroups -> APIEndpoints [label="RMAP Protocol (GPG)"];
+
+    WebUI -> FlaskApp [label="Fetch / Submit"];
+    StaticFiles -> WebUI;
+
+    FlaskApp -> AuthModule [label="Token validation / Session"];
+    FlaskApp -> WatermarkEngine [label="PDF processing"];
+    FlaskApp -> APIEndpoints [label="Request routing"];
+
+    AuthModule -> MariaDB [label="User auth & tokens", style="dashed"];
+    APIEndpoints -> MariaDB [label="CRUD operations"];
+    WatermarkEngine -> FileStorage [label="Read/Write PDFs"];
+    AuthModule -> GPGKeys [label="RMAP crypto ops", style="dashed"];
+
+    // Security Controls
+    subgraph cluster_security {
+        label = "Security Controls";
+        color = "#145A32";
+        InputValidation [label="Input Validation", shape=oval];
+        RateLimiting [label="Rate Limiting", shape=oval];
+        TokenValidation [label="Token Validation", shape=oval];
+        FileSanitization [label="File Sanitization", shape=oval];
+        Logging [label="Security Logging", shape=oval];
+    }
+
+    // Security control connections (dashed)
+    InputValidation -> APIEndpoints [style=dashed, color="#145A32"];
+    RateLimiting -> APIEndpoints [style=dashed, color="#145A32"];
+    TokenValidation -> AuthModule [style=dashed, color="#145A32"];
+    FileSanitization -> WatermarkEngine [style=dashed, color="#145A32"];
+    Logging -> FlaskApp [style=dashed, color="#145A32"];
+
+    // Critical Attack Points
+    APIAttack [label="API Attack Surface", shape=octagon, color="#C0392B", style=filled, fillcolor="#FADBD8"];
+    FileUploadAttack [label="File Upload Risk", shape=octagon, color="#C0392B", style=filled, fillcolor="#FADBD8"];
+    DatabaseAttack [label="Database Access", shape=octagon, color="#C0392B", style=filled, fillcolor="#FADBD8"];
+    AuthBypass [label="Auth Bypass", shape=octagon, color="#C0392B", style=filled, fillcolor="#FADBD8"];
+
+    APIAttack -> APIEndpoints [color="#C0392B", style=dotted];
+    FileUploadAttack -> WatermarkEngine [color="#C0392B", style=dotted];
+    DatabaseAttack -> MariaDB [color="#C0392B", style=dotted];
+    AuthBypass -> AuthModule [color="#C0392B", style=dotted];
+
+    // Legend (simple)
+    subgraph cluster_legend {
+        label="Legend";
+        fontsize=10;
+        LegendControl [shape=plaintext, label=<
+            <TABLE BORDER="0" CELLBORDER="0" CELLSPACING="2">
+                <TR><TD><FONT POINT-SIZE="10"><B>Legend</B></FONT></TD></TR>
+                <TR><TD ALIGN="LEFT">- Solid edge: normal dataflow</TD></TR>
+                <TR><TD ALIGN="LEFT">- Dashed edge: security control relation</TD></TR>
+                <TR><TD ALIGN="LEFT">- Octagon (red): Critical attack point</TD></TR>
+            </TABLE>
+        >];
+    }
+}

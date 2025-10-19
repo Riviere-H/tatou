@@ -25,7 +25,7 @@ services:
       - DB_PASSWORD=${MARIADB_PASSWORD}
       - FLAG_2=${FLAG_2}
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus
-      - APP_ENV=test #Added for testing mode
+      # - APP_ENV=test #Added for testing mode
     depends_on:
       db:
         condition: service_healthy

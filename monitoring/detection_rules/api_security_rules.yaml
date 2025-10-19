@@ -1,0 +1,53 @@
+
+# API Security Detection Rules
+# Based on API Attack Tree Analysis
+version: 1.0
+created: 01.10
+description: Detection rules for API security threats
+
+rules:
+  # Rule 1: Authentication Anomalies
+  - id: API-AUTH-001
+    name: High Failed Login Rate
+    description: Detect brute force or credential stuffing attacks
+    severity: HIGH
+    condition: |
+      COUNT(http_requests_total{method="POST", endpoint="/api/login", status="401"}) 
+      > 5 PER 1 minute BY client_ip
+    action: |
+      - log_security_event("auth_bruteforce", "high", {"ip": client_ip})
+      - increment_counter("security_bruteforce_attempts")
+      - alert_if_continuous("Suspicious login pattern detected")
+
+  # Rule 2: SQL Injection Attempts
+  - id: API-SQL-001
+    name: SQL Syntax Errors Detection
+    description: Detect potential SQL injection attempts
+    severity: HIGH
+    condition: |
+      COUNT(sql_errors_total) > 3 PER 5 minutes BY client_ip
+    action: |
+      - log_security_event("sql_injection_attempt", "high", {"ip": client_ip})
+      - block_temporary(client_ip, "Multiple SQL errors")
+
+  # Rule 3: JWT Token Anomalies
+  - id: API-JWT-001
+    name: JWT Token Reuse from Multiple IPs
+    description: Detect potential token theft or sharing
+    severity: MEDIUM
+    condition: |
+      COUNT_DISTINCT(client_ip) BY jwt_token > 2 PER 10 minutes
+    action: |
+      - log_security_event("token_anomaly", "medium", {"token": jwt_token})
+      - revoke_token(jwt_token)
+
+  # Rule 4: RMAP Protocol Anomalies
+  - id: API-RMAP-001
+    name: RMAP Handshake Failures
+    description: Detect RMAP protocol exploitation attempts
+    severity: MEDIUM
+    condition: |
+      COUNT(rmap_handshake_failures) > 5 PER 2 minutes BY client_ip
+    action: |
+      - log_security_event("rmap_exploit_attempt", "medium", {"ip": client_ip})
+      - rate_limit(client_ip, "rmap_endpoints")

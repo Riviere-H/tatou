@@ -1,0 +1,111 @@
+
+groups:
+  - name: security_alerts_phase2
+    interval: 15s
+    rules:
+      - alert: HighAuthFailureRate
+        expr: rate(auth_failures_total[2m]) > 5
+        for: 1m
+        labels:
+          severity: high
+        annotations:
+          summary: "High authentication failure rate detected"
+          description: "Possible brute-force or credential stuffing attack."
+
+      - alert: SQLInjectionAttempts
+        expr: rate(sql_errors_total[5m]) > 3
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SQL injection pattern detected"
+          description: "Multiple SQL errors may indicate SQLi attempts."
+
+      - alert: FileUploadAnomalies
+        expr: rate(file_upload_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Frequent file upload errors detected"
+          description: "Potential malicious file upload or parser attacks."
+
+      - alert: PDFParserErrorSpike
+        expr: rate(pdf_parser_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Unusual PDF parsing errors"
+          description: "May indicate crafted or malicious PDF uploads."
+
+      - alert: WatermarkTamperingDetected
+        expr: rate(watermark_processing_errors_total[10m]) > 2
+        for: 3m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Possible watermark tampering activity"
+          description: "Watermark verification or modification errors detected."
+
+      - alert: RMAPHandshakeFailures
+        expr: rate(rmap_handshake_failures_total[5m]) > 3
+        for: 2m
+        labels:
+          severity: low
+        annotations:
+          summary: "Multiple RMAP handshake failures"
+          description: "Potential protocol misuse or exploitation attempts."
+
+
+  - name: security_alerts_phase4
+    rules:
+      - alert: HighLoginFailureRate
+        expr: rate(user_login_failures_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: tatou
+        annotations:
+          summary: "High rate of login failures detected"
+          description: "Login failure rate is {{ $value }} per second, indicating possible brute force attempt."
+
+      - alert: SecurityEventsSpike
+        expr: rate(security_events_total[10m]) > 1
+        for: 1m
+        labels:
+          severity: critical
+          service: tatou
+        annotations:
+          summary: "Security events spike detected"
+          description: "Security event rate is {{ $value }} per second."
+
+      - alert: APIErrorsSpike
+        expr: rate(api_errors_total[5m]) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+          service: tatou
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value }} per second."
+
+      - alert: FileProcessingErrors
+        expr: rate(file_processing_errors_total[10m]) > 0.2
+        for: 2m
+        labels:
+          severity: warning
+          service: tatou
+        annotations:
+          summary: "File processing errors detected"
+          description: "File processing error rate is {{ $value }} per second."
+
+      - alert: WatermarkOperationFailures
+        expr: rate(watermark_operations_total{operation=~".*error.*|.*failure.*"}[10m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          service: tatou
+        annotations:
+          summary: "Watermark operation failures detected"
+          description: "Watermark failure rate is {{ $value }} per second."

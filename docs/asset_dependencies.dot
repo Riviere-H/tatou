@@ -1,0 +1,42 @@
+digraph AssetDependencies {
+rankdir=LR;
+node [shape=box, style=filled];
+
+// Critical Assets
+"DB-001" [label="MariaDB Database\n(DB-001)", fillcolor="red"];
+"SEC-002" [label="GPG Keys\n(SEC-002)", fillcolor="red"];
+"SEC-003" [label="JWT Secrets\n(SEC-003)", fillcolor="red"];
+"SEC-005" [label="Flag Files\n(SEC-005)", fillcolor="red"];
+
+// High Assets
+"APP-001" [label="Flask Application\n(APP-001)", fillcolor="orange"];
+"APP-002" [label="Gunicorn Server\n(APP-002)", fillcolor="orange"];
+"WM-001" [label="Phantom Watermark\n(WM-001)", fillcolor="orange"];
+"AUTH-001" [label="JWT System\n(AUTH-001)", fillcolor="orange"];
+"AUTH-002" [label="RMAP Protocol\n(AUTH-002)", fillcolor="orange"];
+
+// Medium Assets
+"DB-002" [label="phpMyAdmin\n(DB-002)", fillcolor="yellow"];
+"MON-001" [label="Prometheus\n(MON-001)", fillcolor="yellow"];
+"MON-002" [label="Grafana\n(MON-002)", fillcolor="yellow"];
+"FS-001" [label="Original PDFs\n(FS-001)", fillcolor="yellow"];
+"FS-002" [label="Watermarked PDFs\n(FS-002)", fillcolor="yellow"];
+
+// Critical Dependencies
+APP-001 -> DB-001 [label="database access"];
+APP-001 -> SEC-003 [label="token validation"];
+AUTH-002 -> SEC-002 [label="GPG encryption"];
+
+// High Dependencies
+APP-002 -> APP-001 [label="serves"];
+WM-001 -> APP-001 [label="integrated"];
+AUTH-001 -> APP-001 [label="protects"];
+
+// Medium Dependencies
+DB-002 -> DB-001 [label="manages"];
+MON-001 -> APP-001 [label="monitors"];
+MON-002 -> MON-001 [label="visualizes"];
+FS-001 -> APP-001 [label="stores"];
+FS-002 -> WM-001 [label="output"];
+
+}

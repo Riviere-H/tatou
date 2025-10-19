@@ -1,0 +1,57 @@
+Authentication Bypass Attack Sequence
+=====================================
+
+Normal Authentication Flow:
+1. User -> Frontend: Submit credentials
+2. Frontend -> API: POST /api/login
+3. API -> Database: Verify credentials (parameterized query)
+4. Database -> API: Return user record
+5. API -> Frontend: Return JWT token
+6. Frontend: Store token securely (localStorage/sessionStorage/cookie)
+
+Attack Scenarios:
+
+Scenario 1: JWT Token Theft
+----------------------------
+Attacker -> Network: Intercept HTTP traffic (if not TLS)
+Attacker -> Browser: Exploit XSS to steal token from storage
+Attacker -> API: Use stolen token in Authorization header
+API -> Attacker: Grant access (token valid)
+
+Scenario 2: JWT Token Forgery
+-----------------------------
+Attacker -> Analysis: Discover weak token secret or reuse
+Attacker -> Tool: Create forged token with modified claims
+Attacker -> API: Send forged token
+API -> Attacker: Grant access (signature validated incorrectly or secret compromised)
+
+Scenario 3: RMAP Protocol Exploit
+---------------------------------
+Attacker -> Analysis: Reverse engineer RMAP implementation
+Attacker -> Tool: Craft malicious RMAP messages
+Attacker -> API: Send crafted RMAP Message 1 to elicit server response
+API -> Attacker: Responds with server nonce (if flawed validation)
+Attacker -> API: Send manipulated Message 2
+API -> Attacker: Accept and bind link/session erroneously
+
+Scenario 4: Session Hijacking (Replay)
+--------------------------------------
+Attacker -> Network: Eavesdrop on unencrypted traffic
+Attacker -> Tool: Extract session tokens
+Attacker -> API: Replay captured Authentication header
+API -> Attacker: Maintain authenticated session
+
+
+Detection Points:
+- Unusual number of failed JWT validations from same IP
+- RMAP handshake patterns deviating from normal
+- Token usage from multiple IPs in short time-window
+- Rapid sequence of authentication attempts
+
+Prevention Measures:
+- Use TLS / avoid plaintext HTTP for production
+- Short-lived tokens + refresh tokens
+- Token binding to client fingerprint (IP + UA)
+- Monitor RMAP handshake anomalies and rate-limit RMAP endpoints
+
+

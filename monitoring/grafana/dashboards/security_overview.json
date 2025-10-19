@@ -1,0 +1,33 @@
+{
+  "id": null,
+  "uid": "security_overview",
+  "title": "Tatou Security Overview",
+  "schemaVersion": 37,
+  "version": 1,
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Security Events",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [{"expr": "sum by (event_type) (security_events_total)", "refId": "A"}]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Login Failures",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [{"expr": "sum by (client_ip) (user_login_failures_total)", "refId": "A"}]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "API Errors",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "targets": [{"expr": "sum by (endpoint, method) (api_errors_total)", "refId": "A"}]
+    }
+  ]
+}
+

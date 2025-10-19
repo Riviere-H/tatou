@@ -1,0 +1,41 @@
+digraph FileUploadAttackTree {
+    rankdir=TB;
+    node [shape=rectangle, style=filled, fillcolor=lightblue];
+
+    "Compromise File Storage / Watermarked PDFs" [shape=ellipse, fillcolor=red];
+
+    "Upload Malicious File" [fillcolor=orange];
+    "Bypass Type Check" [fillcolor=yellow];
+    "Exploit PDF Parser" [fillcolor=yellow];
+    "Path Traversal / Overwrite" [fillcolor=yellow];
+    "Watermark Removal" [fillcolor=orange];
+
+    "Compromise File Storage / Watermarked PDFs" -> "Upload Malicious File";
+    "Compromise File Storage / Watermarked PDFs" -> "Watermark Removal";
+
+    "Upload Malicious File" -> "Bypass Type Check";
+    "Upload Malicious File" -> "Exploit PDF Parser";
+    "Upload Malicious File" -> "Path Traversal / Overwrite";
+
+    "Bypass Type Check" -> "Craft faked PDF header" [fillcolor=lightgreen];
+    "Bypass Type Check" -> "Rename extension to .pdf" [fillcolor=lightgreen];
+
+    "Exploit PDF Parser" -> "Malformed object streams" [fillcolor=lightgreen];
+    "Exploit PDF Parser" -> "Embedded JavaScript" [fillcolor=lightgreen];
+
+    "Path Traversal / Overwrite" -> "Use ../ in filename" [fillcolor=lightgreen];
+    "Path Traversal / Overwrite" -> "Race condition overwrite" [fillcolor=lightgreen];
+
+    "Watermark Removal" -> "Reverse watermark algorithm" [fillcolor=yellow];
+    "Watermark Removal" -> "Process and rewrite PDF" [fillcolor=yellow];
+
+    // Detection points
+    "File type mismatch" [shape=octagon, fillcolor=pink];
+    "High file error rate" [shape=octagon, fillcolor=pink];
+    "Unexpected file sizes" [shape=octagon, fillcolor=pink];
+
+    "Bypass Type Check" -> "File type mismatch" [style=dashed, color=red];
+    "Exploit PDF Parser" -> "High file error rate" [style=dashed, color=red];
+    "Path Traversal / Overwrite" -> "Unexpected file sizes" [style=dashed, color=red];
+}
+

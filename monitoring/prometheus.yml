@@ -1,0 +1,22 @@
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 15s
+
+rule_files:
+  - "/etc/prometheus/rules/security_alerts.yml"
+
+scrape_configs:
+  - job_name: "tatou-app"
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+    static_configs:
+      - targets: ["server:5000"]
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ['node-exporter:9100']

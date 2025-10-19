@@ -1,0 +1,100 @@
+digraph APIAttackTree {
+    rankdir=TB;
+    node [shape=rectangle, style=filled, fillcolor=lightblue];
+    edge [fontsize=10];
+
+    // Root node
+    "Compromise API Endpoints" [shape=ellipse, fillcolor=red, color=red];
+
+    // Level 1: Main attack categories
+    "Authentication Bypass" [fillcolor=orange];
+    "Injection Attacks" [fillcolor=orange];
+    "Data Exposure" [fillcolor=orange];
+    "DoS Attacks" [fillcolor=orange];
+
+    "Compromise API Endpoints" -> "Authentication Bypass";
+    "Compromise API Endpoints" -> "Injection Attacks";
+    "Compromise API Endpoints" -> "Data Exposure";
+    "Compromise API Endpoints" -> "DoS Attacks";
+
+    // Level 2: Authentication Bypass details
+    "Steal JWT Token" [fillcolor=yellow];
+    "Forge JWT Token" [fillcolor=yellow];
+    "Exploit RMAP Flaws" [fillcolor=yellow];
+    "Session Hijacking" [fillcolor=yellow];
+
+    "Authentication Bypass" -> "Steal JWT Token";
+    "Authentication Bypass" -> "Forge JWT Token";
+    "Authentication Bypass" -> "Exploit RMAP Flaws";
+    "Authentication Bypass" -> "Session Hijacking";
+
+    // Level 3: JWT Token attacks
+    "Intercept HTTP Traffic" [fillcolor=lightgreen];
+    "Access Browser Storage" [fillcolor=lightgreen];
+    "Weak Secret Guessing" [fillcolor=lightgreen];
+    "Modify Token Claims" [fillcolor=lightgreen];
+
+    "Steal JWT Token" -> "Intercept HTTP Traffic";
+    "Steal JWT Token" -> "Access Browser Storage";
+    "Forge JWT Token" -> "Weak Secret Guessing";
+    "Forge JWT Token" -> "Modify Token Claims";
+
+    // Level 2: Injection Attacks details
+    "SQL Injection" [fillcolor=yellow];
+    "Command Injection" [fillcolor=yellow];
+    "Path Traversal" [fillcolor=yellow];
+
+    "Injection Attacks" -> "SQL Injection";
+    "Injection Attacks" -> "Command Injection";
+    "Injection Attacks" -> "Path Traversal";
+
+    // Level 3: SQL Injection techniques
+    "Union-based SQLi" [fillcolor=lightgreen];
+    "Boolean-based SQLi" [fillcolor=lightgreen];
+    "Time-based SQLi" [fillcolor=lightgreen];
+
+    "SQL Injection" -> "Union-based SQLi";
+    "SQL Injection" -> "Boolean-based SQLi";
+    "SQL Injection" -> "Time-based SQLi";
+
+    // Level 2: Data Exposure details
+    "IDOR Attacks" [fillcolor=yellow];
+    "Excessive Data Return" [fillcolor=yellow];
+    "Mass Assignment" [fillcolor=yellow];
+
+    "Data Exposure" -> "IDOR Attacks";
+    "Data Exposure" -> "Excessive Data Return";
+    "Data Exposure" -> "Mass Assignment";
+
+    // Level 2: DoS Attacks details
+    "Rate Limit Bypass" [fillcolor=yellow];
+    "Resource Exhaustion" [fillcolor=yellow];
+    "Application Logic DoS" [fillcolor=yellow];
+
+    "DoS Attacks" -> "Rate Limit Bypass";
+    "DoS Attacks" -> "Resource Exhaustion";
+    "DoS Attacks" -> "Application Logic DoS";
+
+    // Detection points
+    "High Failed Login Rate" [shape=octagon, fillcolor=pink];
+    "SQL Syntax Errors" [shape=octagon, fillcolor=pink];
+    "Unusual API Patterns" [shape=octagon, fillcolor=pink];
+    "Resource Usage Spikes" [shape=octagon, fillcolor=pink];
+    // Connect detection points
+    "Steal JWT Token" -> "High Failed Login Rate" [style=dashed, color=red];
+    "SQL Injection" -> "SQL Syntax Errors" [style=dashed, color=red];
+    "IDOR Attacks" -> "Unusual API Patterns" [style=dashed, color=red];
+    "Resource Exhaustion" -> "Resource Usage Spikes" [style=dashed, color=red];
+
+    // Legend
+    subgraph cluster_legend {
+        label="Attack Tree Legend";
+        fontsize=10;
+        "Attack Goal"[fillcolor=red];
+        "Attack Category"[fillcolor=orange];
+        "Attack Technique"[fillcolor=yellow];
+        "Specific Method"[fillcolor=lightgreen];
+        "Detection Point"[shape=octagon, fillcolor=pink];
+    }
+}
+

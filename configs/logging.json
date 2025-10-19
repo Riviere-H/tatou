@@ -1,0 +1,58 @@
+
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  
+  "formatters": {
+    "json": {
+      "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+      "format": "%(timestamp)s %(level)s %(event_type)s %(user_id)s %(login)s %(client_ip)s %(message)s %(details)s",
+      "timestamp": true
+    },
+    "simple": {
+      "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    }
+  },
+  
+  "handlers": {
+    "file": {
+      "class": "logging.handlers.TimedRotatingFileHandler",
+      "level": "INFO",
+      "formatter": "json",
+      "filename": "logs/app.log",
+      "when": "midnight",
+      "interval": 1,
+      "backupCount": 7,
+      "encoding": "utf-8"
+    },
+    "console": {
+      "class": "logging.StreamHandler",
+      "level": "INFO",
+      "formatter": "simple",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  
+  "loggers": {
+    "tatou": {
+      "level": "INFO",
+      "handlers": ["file", "console"],
+      "propagate": false
+    },
+    "tatou.security": {
+      "level": "INFO", 
+      "handlers": ["file"],
+      "propagate": false
+    },
+    "tatou.audit": {
+      "level": "INFO",
+      "handlers": ["file"],
+      "propagate": false
+    }
+  },
+  
+  "root": {
+    "level": "WARNING",
+    "handlers": ["console"]
+  }
+}

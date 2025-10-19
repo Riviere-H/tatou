@@ -1,0 +1,35 @@
+
+File Upload Attack Sequences
+============================
+
+Normal Flow:
+1. User -> API: POST /api/upload-document (multipart/form-data with PDF)
+2. API: Validate Content-Type and filename
+3. API: Save file to storage under user folder
+4. API: Record metadata in DB
+5. User can later request watermark operations on saved PDF
+
+Attack Scenario A: Path Traversal / Overwrite
+---------------------------------------------
+Attacker -> API: Upload file with filename containing ../ or clever encoding
+API -> Store: If storage path concatenation flawed, attacker overwrites other files
+Outcome: Replace or remove existing PDF (integrity loss)
+
+Attack Scenario B: Malicious PDF with Embedded Script
+-----------------------------------------------------
+Attacker -> API: Upload PDF containing embedded JavaScript / malformed objects
+API -> Watermark Engine: PDF parser crashes or executes unexpected code (if parser vulnerable)
+Outcome: Denial of Service or remote code execution in worst case
+
+Attack Scenario C: Watermark Removal Attempt
+--------------------------------------------
+Attacker -> API: Upload manipulated PDF derived from existing watermarked version
+Attacker -> Local Tools: Apply transformations aiming to remove watermark (filtering, rewriting)
+Outcome: Watermark compromised, secrecy lost
+
+Detection & Prevention:
+- Strict filename sanitization and secure saving (no direct concatenation)
+- Check file magic bytes, not only extension
+- Run PDF parsing/sanitization in isolated/process-limited context
+- Monitor unusual file operations (unexpected file size, high error rates)
+
