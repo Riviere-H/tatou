@@ -13,6 +13,7 @@ services:
       - ./PDF_sample/rmap_sample.pdf:/app/storage/rmap_sample.pdf:ro
       - ./logs:/app/logs
       - ./configs:/app/configs:ro
+      - ./server/test:/app/test
       - prometheus-multiproc:/tmp/prometheus
     environment:
       - PYTHONUNBUFFERED=1

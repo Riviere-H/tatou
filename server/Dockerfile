@@ -14,7 +14,9 @@ RUN apt-get update \
 COPY pyproject.toml /app/pyproject.toml
 
 # Install runtime dependencies
-RUN pip install --no-cache-dir -e .
+# RUN pip install --no-cache-dir -e .
+
+RUN pip install --no-cache-dir -e ".[dev]"
 
 # Copy sources after dependencies installation
 COPY src /app/src

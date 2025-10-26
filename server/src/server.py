@@ -7,7 +7,9 @@ from pathlib import Path
 from functools import wraps
 import re
 import time
+import binascii
 from typing import Any, Dict
+from pgpy.errors import PGPError
 
 from flask import Flask, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
@@ -379,7 +381,7 @@ def create_app():
             except ValueError as e:
                 # Input validation error: safe to return details
                 return jsonify({"error": str(e)}), 400
-            except (SecretNotFoundError, InvalidKeyError) as e:
+            except (SecretNotFoundError, PGPError) as e:
                 # Watermark-related errors: keep original message
                 return jsonify({"error": str(e)}), 400
             except Exception as e:
@@ -399,31 +401,30 @@ def create_app():
         )
 
     # ----- Global Error Handlers -----
-    # @app.errorhandler(404)
-    # def not_found_error(error):
-        # log_security_event("security_warning", r"404 Not Found: {request.url}")
-        # return jsonify({"error": "Resource not found"}), 404
-
-    # @app.errorhandler(405)
-    # def method_not_allowed_error(error):
-        # log_security_event("method_not_allowed", f"405 Method Not Allowed: {request.method} {request.url}")
-        # return jsonify({"error": "Method not allowed"}), 405
-
-    @app.errorhandler(NotFound)
-    def handle_not_found(e):
-        # optional: log to security event system
-        # log_security_event("security_warning", f"404 Not Found: {request.url}")
+    @app.errorhandler(404)
+    def not_found_error(error):
+        log_security_event("security_warning", r"404 Not Found: {request.url}")
         return jsonify({"error": "Resource not found"}), 404
 
-    @app.errorhandler(MethodNotAllowed)
-    def handle_method_not_allowed(e):
+    @app.errorhandler(405)
+    def method_not_allowed_error(error):
+        log_security_event("method_not_allowed", f"405 Method Not Allowed: {request.method} {request.url}")
+        return jsonify({"error": "Method not allowed"}), 405
+
+    # @app.errorhandler(NotFound)
+    # def handle_not_found(e):
+        # log_security_event("security_warning", f"404 Not Found: {request.url}")
+        # return jsonify({"error": "Resource not found"}), 404
+
+    # @app.errorhandler(MethodNotAllowed)
+    # def handle_method_not_allowed(e):
         # optional: log to security event system
         # log_security_event("method_not_allowed", f"405 Method Not Allowed: {request.method} {request.url}")
-        response = e.get_response()
-        body = {"error": "Method not allowed"}
-        response.data = jsonify(body).get_data()
-        response.mimetype = "application/json"
-        return response, 405
+        # response = e.get_response()
+        # body = {"error": "Method not allowed"}
+        # response.data = jsonify(body).get_data()
+        # response.mimetype = "application/json"
+        # return response, 405
 
     # ----- Add security headers middleware -----
     @app.after_request
@@ -488,6 +489,13 @@ def create_app():
     passphrase = os.environ.get("GPG_PASSPHRASE", "")
 
     try:
+        from rmap.compat_helpers import decrypt_forgiving_json
+        print ("RMAP v2.0.0 compatibility helpers loaded")
+    except ImportError:
+        decrypt_forgiving_json = None
+        print ("Using RMAP v1.0.0 compatibility mode")
+
+    try:
 
         app.config["RMAP_IDENTITY_MANAGER"] = IdentityManager(
         client_keys_dir=str(client_keys_dir),
@@ -501,9 +509,6 @@ def create_app():
         print (f"RMAP initialization failed: {e}")
 
         app.config["RMAP_IDENTITY_MANAGER"] = None
-        # FIX: Explicitly set RMAP_HANDLER to None upon failure.
-        app.config["RMAP_HANDLER"] = None
-        
         app.config["PMAP_HANDLER"] = None
 
 
@@ -801,7 +806,7 @@ def create_app():
             log_error_event("system_error", r"Database error: {str(e)}")
             return jsonify({"error": "Database operation failed"}), 503
 
-        log_sensitive_operation("document_upload", f"document_{did}", g.user, f"size:{size} bytes")
+        log_sensitive_operation("document_upload", g.user, f"document_{did}, size:{size} bytes")
         
         log_audit_event("document_upload", f"Document uploaded: {final_name}", user_id=g.user["id"], login=g.user["login"], details={"document_id": did, "file_name": final_name, "size": size})
         
@@ -1577,11 +1582,13 @@ def create_app():
             # call RMAP handler to process Message 2
             response = app.config["RMAP_HANDLER"].handle_message2(payload)
 
-            if payload.get("payload") and "@" in payload.get("payload"):
-                raise binascii.Error("Malformed Base64 payload detected during regression test.")
+            if decrypt_forgiving_json and "error" not in response:
+                if "result" not in response:
+                    log_security_event("warning", "RMAP v2.0.0 response missing 'result' field")
+                    return jsonify({"error": "Invalid RMAP response format"}), 500
 
         # Catch parsing/Base64/PGP errors
-        except (binascii.Error, ValueError, Exception) as e: 
+        except (binascii.Error, ValueError) as e: 
             # FIX: Corrected variable name and handled Base64/PGP errors
             RMAP_HANDSHAKE_FAILS.inc() 
             log_error_event("security_issue", f"RMAP payload parsing failed: {e}")

@@ -5,10 +5,10 @@ import numpy as np
 import os
 from typing import Any, Dict, Optional
 from pgpy import PGPKey, PGPMessage
+from pgpy.errors import PGPError
 import fitz  # PyMuPDF
 from PIL import Image
-from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import NameObject, createStringObject
+
 
 from watermarking_method import (
     WatermarkingMethod,
@@ -59,27 +59,75 @@ class MetaSVDWatermark(WatermarkingMethod):
         except Exception as e:
             raise WatermarkingError(f"Encryption failed: {str(e)}")
 
-    def encode_metadata(self, pdf_bytes: bytes, encrypted_secret: str) -> bytes:
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        writer = PdfWriter()
+    # def encode_metadata(self, pdf_bytes: bytes, encrypted_secret: str) -> bytes:
+    #     reader = PdfReader(io.BytesIO(pdf_bytes))
+    #     writer = PdfWriter()
 
-        for page in reader.pages:
-            writer.add_page(page)
+    #     for page in reader.pages:
+    #         writer.add_page(page)
 
-        meta = reader.metadata or {}
-        meta[NameObject("/Author")] = createStringObject(self.SIGNATURE)
-        meta[NameObject("/Title")] = createStringObject(f"WM-{base64.b64encode(encrypted_secret.encode()).decode()[:50]}"
-        )
+    #     meta = reader.metadata or {}
+    #     meta[NameObject("/Author")] = createStringObject(self.SIGNATURE)
+    #     meta[NameObject("/Title")] = createStringObject(f"WM-{base64.b64encode(encrypted_secret.encode()).decode()[:50]}"
+    #     )
 
-        writer.add_metadata(meta)
+    #     writer.add_metadata(meta)
 
-        output = io.BytesIO()
-        writer.write(output)
-        return output.getvalue()
+    #     output = io.BytesIO()
+    #     writer.write(output)
+    #     return output.getvalue()
+
+    def decrypt_secret(self, encrypted_secret: str, key_path: str) -> str:
+        try:
+            if not os.path.isabs(key_path):
+                key_filename = key_path if key_path.endswith(".asc") else f"{key_path}.asc"
+                # Private keys are stored on the server
+                key_path = os.path.join("/app/keys/server", key_filename)
+
+            if not os.path.exists(key_path):
+                raise WatermarkingError(f"Private key file not found: {key_path}")
+
+            # Load the private key
+            priv_key, _ = PGPKey.from_file(key_path)
+            
+            
+            # Parse the encrypted message
+            message = PGPMessage.from_blob(encrypted_secret)
+            
+            # Decrypt the message
+            decrypted_payload = priv_key.decrypt(message).message
+            
+            # The payload is JSON, parse it
+            payload = json.loads(decrypted_payload)
+            
+            # Return the actual secret content
+            content = payload.get("content")
+            if content is None:
+                raise WatermarkingError("Decrypted payload has no 'content' field")
+            return content
+            
+        except Exception as e:
+            raise WatermarkingError(f"Decryption failed: {str(e)}")
+
 
     def embed_svd_rgb(self, pdf_bytes: bytes, encrypted_secret: str) -> bytes:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         try:
+            # 1. Add metadata 
+            meta = doc.metadata or {}
+            meta['author'] = self.SIGNATURE
+            meta['title'] = f"WM-{base64.b64encode(encrypted_secret.encode()).decode()}"
+            doc.set_metadata(meta)
+
+            # 2. SVD Watermarking Logic
+            # Define minimum dimensions to watermark.
+            # This skips small images like logos or icons.
+            MIN_DIM_FOR_SVD = 5   # SVD math requires at least 5x5
+            MIN_WIDTH = 100       # pixels
+            MIN_HEIGHT = 100      # pixels
+
+            secret_bytes = encrypted_secret.encode()[:15]
+
             for page_index in range(len(doc)):
                 images = doc[page_index].get_images(full=True)
                 if not images:
@@ -90,26 +138,70 @@ class MetaSVDWatermark(WatermarkingMethod):
                     base_image = doc.extract_image(xref)
                     image_bytes = base_image["image"]
 
-                    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-                    img_array = np.array(image).astype(float)
-                    secret_bytes = encrypted_secret.encode()[:15]
+                    try:
+                        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+                        img_array = np.array(image).astype(float)
 
-                    for c in range(3):
-                        channel = img_array[:, :, c]
-                        U, S, V = np.linalg.svd(channel, full_matrices=False)
-                        for i, b in enumerate(secret_bytes[:5]):
-                            S[i] += (b % 5)
-                        img_array[:, :, c] = np.dot(U, np.dot(np.diag(S), V))
+                        # Check if image is too small (e.g., a logo)
+                        # or too small for the SVD operation.
+                        if (image.width < MIN_WIDTH or
+                            image.height < MIN_HEIGHT or
+                            min(img_array.shape[0], img_array.shape[1]) < MIN_DIM_FOR_SVD):
+                            continue # Skip this small image and check the next one
 
-                    img_encoded = Image.fromarray(np.clip(img_array, 0, 255).astype(np.uint8))
-                    buffer = io.BytesIO()
-                    img_encoded.save(buffer, format="PNG")
-                    doc[page_index].insert_image(doc[page_index].rect, stream=buffer.getvalue())
-                    break
+                        for c in range(3):
+                            channel = img_array[:, :, c]
+
+                            if min(channel.shape) < MIN_DIM_FOR_SVD:
+                                continue
+                            # 1. First SVD (I = U * S * V^T)
+                            U, S_vector, V = np.linalg.svd(channel, full_matrices=False)
+
+                            # 2. Modify the singular values (D = S + a*W) 
+                            S_vector_modified = np.copy(S_vector)
+                            for i, b in enumerate(secret_bytes[:5]):
+                                S_vector_modified[i] += (b % 5)
+
+                            # Create the modified diagonal matrix D
+                            D_matrix = np.diag(S_vector_modified)
+
+                            # 3. Perform the SECOND SVD on D (D = U_w * S_w * V_w^T) 
+                            U_w, S_w_vector, V_w = np.linalg.svd(D_matrix, full_matrices=False)
+                            
+                            # 4. Reconstruct the image using ORIGINAL U, V but NEW S_w (I_w = U * S_w * V^T) 
+                            # Ensures S_w_matrix has the right shape
+                            S_w_matrix = np.diag(S_w_vector)
+                            
+                            # Reconstruct the channel using the new stable singular values
+                            reconstructed_channel = np.dot(U, np.dot(S_w_matrix, V))
+                            
+                            img_array[:, :, c] = reconstructed_channel
+
+                        # Uses np.clip as a final safeguard instead of min-max scaling.
+                        img_array_clipped = np.clip(img_array, 0, 255)
+                        img_encoded = Image.fromarray(img_array_clipped.astype(np.uint8))
+                        
+                        buffer = io.BytesIO()
+
+                        original_ext = base_image.get("ext", "png").lower()
+                        save_format = "PNG"
+                        if original_ext in ["jpeg", "jpg"]:
+                            save_format = "JPEG"
+
+                        img_encoded.save(buffer, format=save_format)
+
+                        doc.update_stream(xref, buffer.getvalue())
+                    
+                        break
+                    except Exception as e_img:
+                        # Log or ignore error for this image and continue
+                        print(f"Skipping image {xref} due to error: {e_img}")
+                        continue # Move to the next image
                 break
-            return doc.write()
+
+            return doc.write(garbage=3, deflate=True)
         except Exception as e:
-            raise WatermarkingError(f"SVD embedding failed: {str(e)}")
+            raise WatermarkingError(f"SVD and metadata embedding failed: {str(e)}")
         finally:
             doc.close()
 
@@ -127,42 +219,79 @@ class MetaSVDWatermark(WatermarkingMethod):
         pdf_bytes = load_pdf_bytes(pdf)
         watermark_payload = self.generate_watermark_data(secret, client_identity)
         encrypted_secret = self.encrypt_secret(watermark_payload, key)
-        pdf_with_meta = self.encode_metadata(pdf_bytes, encrypted_secret)
-        return self.embed_svd_rgb(pdf_with_meta, encrypted_secret)
+        
+        # pdf_with_meta = self.encode_metadata(pdf_bytes, encrypted_secret)
+        return self.embed_svd_rgb(pdf_bytes, encrypted_secret)
 
     def read_secret(self, pdf: PdfSource, key: str, **kwargs) -> str:
         pdf_bytes = load_pdf_bytes(pdf)
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        meta = reader.metadata or {}
-        title_val = meta.get("/Title", "")
-        if title_val.startswith("WM-"):
+        # reader = PdfReader(io.BytesIO(pdf_bytes))
+        # meta = reader.metadata or {}
+        # title_val = meta.get("/Title", "")
+        doc = None
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            meta = doc.metadata or {}
+            title_val = meta.get("title", "") 
+            
+            if not title_val.startswith("WM-"):
+                raise SecretNotFoundError("No watermark metadata found")
+                
             b64_encrypted = title_val[3:]
+            encrypted_pgp_message = ""
             try:
-                return base64.b64decode(b64_encrypted).decode("utf-8")
+                # This gets the raw PGP message string 
+                encrypted_pgp_message = base64.b64decode(b64_encrypted).decode("utf-8")
             except Exception:
                 raise SecretNotFoundError("Failed to decode Base64 watermark")
-        raise SecretNotFoundError("No watermark metadata found")
+            
+            # Now, decrypt the PGP message
+            # The 'key' parameter is the *name* of the private key, e.g., "unit-test-key"
+            decrypted_content = self.decrypt_secret(encrypted_pgp_message, key)
+            return decrypted_content
+
+        except Exception as e:
+            # Catch decryption errors as well
+            if isinstance(e, (SecretNotFoundError, WatermarkingError, PGPError)):
+                raise SecretNotFoundError(f"Failed to read or decrypt secret: {str(e)}")
+            raise SecretNotFoundError(f"An unexpected error occurred: {str(e)}")
+        finally:
+            if doc:
+                doc.close()
 
     def read_watermark_metadata(self, pdf: PdfSource, key: str) -> Dict[str, Any]:
+        # Use PyMuPDF (fitz) for reading
         pdf_bytes = load_pdf_bytes(pdf)
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        meta = reader.metadata or {}
-        title_val = meta.get("/Title", "")
-        if title_val.startswith("WM-"):
-            b64_encrypted = title_val[3:]
-            return {
-                "provider": self.SIGNATURE,
-                "encrypted_base64": b64_encrypted,
-                "hint": "Use your private key to decrypt this PGP message."
-            }
-        raise SecretNotFoundError("No watermark metadata found")
+        doc = None
+        try:
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            meta = doc.metadata or {}
+            title_val = meta.get("title", "") # Lowercase key
+            if title_val.startswith("WM-"):
+                b64_encrypted = title_val[3:]
+                return {
+                    "provider": self.SIGNATURE,
+                    "encrypted_base64": b64_encrypted,
+                    "hint": "Use your private key to decrypt this PGP message."
+                }
+            raise SecretNotFoundError("No watermark metadata found")
+        except Exception as e:
+            raise SecretNotFoundError(f"Failed to read PDF metadata: {e}")
+        finally:
+            if doc:
+                doc.close()
 
     def is_watermark_applicable(self, pdf: PdfSource, position: Optional[str] = None) -> bool:
+        # Use PyMuPDF (fitz) for reading
+        doc = None
         try:
             pdf_bytes = load_pdf_bytes(pdf)
-            reader = PdfReader(io.BytesIO(pdf_bytes))
-            return len(reader.pages) > 0
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            return doc.page_count > 0
         except Exception:
             return False
+        finally:
+            if doc:
+                doc.close()
 
 __all__ = ["MetaSVDWatermark"]
